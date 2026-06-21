@@ -1,0 +1,4 @@
+CREATE DATABASE auth_db;
+CREATE DATABASE users_db;
+CREATE DATABASE files_db;
+CREATE DATABASE notifications_db;
