@@ -59,6 +59,12 @@ export const updateRelation = async (userId: string, targetId: string, data: Upd
     return count;
 }
 
+export const deleteRelation = async (userId: string, targetId: string) => {
+    const [first, second] = [userId, targetId].sort();
+    const count = await db<Relationship>('relationships').where({ requester_id: first, receiver_id: second }).delete();
+    return count;
+}
+
 export const getAllRelations = async (userId: string): Promise<Relationship[]> => {
     const relations = await db<Relationship>('relationships').where({ requester_id: userId }).orWhere({ receiver_id: userId });
     return relations;

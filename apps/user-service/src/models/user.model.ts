@@ -30,4 +30,4 @@ export interface Relationship {
   updated_at: Date
 }
 
-export type UpdateRelationData = Pick<Relationship, 'status'>
+export type UpdateRelationData = Pick<Relationship, 'status' | 'updated_at'>
