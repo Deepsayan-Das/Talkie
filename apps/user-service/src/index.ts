@@ -1,13 +1,15 @@
 import express from 'express'
 import env from './config/env'
 import db from './db/knex'
-
+import router from './routes/user.routes'
 const app = express()
 
 app.use(express.json())
 
+
+
 // TODO: mount user router
-// app.use('/api/v1/users', userRouter)
+app.use('/api/v1/user', router)
 
 const startup = async () => {
     try {
