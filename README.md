@@ -278,6 +278,23 @@ ENUMs are painful to migrate in PostgreSQL — adding a new value requires ALTER
 | POST | /auth/refresh | Refresh token cookie | Rotate tokens |
 | POST | /auth/logout | Access token | Blacklist token, clear session |
 
+## User Service — API Endpoints
+
+| Method | Endpoint | Auth Required | Description |
+|---|---|---|---|
+| GET | /users/search?q= | X-User-Id | Search users by username |
+| GET | /users/buddies | X-User-Id | Get all relationships for current user |
+| GET | /users/:id | X-User-Id | View user profile |
+| PATCH | /users/:id | X-User-Id | Edit own profile only |
+| POST | /users/:id/buddy-request | X-User-Id | Send buddy request |
+| PATCH | /users/:id/buddy-request/accept | X-User-Id | Accept incoming request |
+| PATCH | /users/:id/buddy-request/reject | X-User-Id | Reject incoming request |
+| POST | /users/:id/block | X-User-Id | Block a user (upsert) |
+| DELETE | /users/:id/block | X-User-Id | Unblock a user (deletes relationship row) |
+
+**X-User-Id internal trust pattern:**
+The API Gateway verifies the JWT and forwards the decoded user identity as X-User-Id header. Internal services trust this header — they never re-validate the JWT. This is the standard internal service trust pattern.
+
 ---
 
 ## Database Schema (auth_db)
@@ -326,6 +343,44 @@ Migrations are versioned, timestamped, and reversible. Track exactly when a colu
 | user_id | UUID FK UNIQUE | → users_auth(id) — UNIQUE = one user, one role |
 | role | VARCHAR(50) | DEFAULT 'UNVERIFIED' |
 | assigned_at | TIMESTAMP | DEFAULT now() |
+
+## Database Schema (users_db)
+
+### users_profile
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | |
+| user_id | UUID | References auth_db users_auth(id) — no FK, cross-service boundary |
+| username | VARCHAR(50) UNIQUE | Indexed |
+| avatar_url | VARCHAR(500) | Nullable |
+| last_seen | TIMESTAMP | Nullable |
+| bio | VARCHAR(300) | Nullable |
+| created_at | TIMESTAMP | DEFAULT now() |
+| updated_at | TIMESTAMP | DEFAULT now() |
+
+**Why no foreign key to auth_db?**
+Foreign keys cannot cross database boundaries in PostgreSQL. The application layer enforces this relationship — User Service trusts that user_id was issued by Auth Service via the X-User-Id header forwarded by the Gateway.
+
+### relationships
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | |
+| requester_id | UUID | Smaller UUID of the pair — canonical ordering enforced |
+| receiver_id | UUID | Larger UUID of the pair |
+| status | VARCHAR(20) | pending / accepted / rejected / blocked |
+| is_active | BOOLEAN | DEFAULT true |
+| created_at | TIMESTAMP | DEFAULT now() |
+| updated_at | TIMESTAMP | DEFAULT now() |
+
+**Canonical ordering pattern:**
+A relationship between users A and B is always stored with the smaller UUID as requester_id. This means (A→B) and (B→A) map to the same row, enforced by a CHECK constraint. All queries sort IDs before lookup:
+```typescript
+const [first, second] = [userId, targetId].sort();
+```
+This prevents duplicate rows and makes bidirectional lookups O(1).
+
+**Why not a follow model?**
+Talkie is a chat app. A one-sided connection makes no sense — you cannot have a conversation with someone who didn't agree to it. Bidirectional friendship with explicit accept/reject is the correct model.
 
 ---
 
@@ -438,7 +493,7 @@ REDIS_PORT=6379
 | 0 | ✅ Done | Architecture design, service boundaries, decisions |
 | 1 | ✅ Done | Docker Compose — PostgreSQL, MongoDB, Redis |
 | 2 | ✅ Done | Auth Service — JWT, refresh tokens, RBAC, email verification, tests |
-| 3 | 🔄 Next | User Service — profiles, relationships |
+| 3 | ✅ Done | User Service — profiles, relationships, buddy request lifecycle |
 | 4 | ⏳ | API Gateway — routing, rate limiting, JWT verification |
 | 5 | ⏳ | Chat Service — rooms, messages, Socket.IO |
 | 6 | ⏳ | File Service — upload, S3, metadata |
@@ -481,3 +536,15 @@ A migration is a versioned, reversible database change. Init scripts run once an
 
 **Q: How do you test microservices without running the full stack?**
 Unit tests mock the repository layer — service logic is tested with fake database functions. Integration tests use supertest to simulate HTTP requests against an in-memory Express app with the service layer mocked. Zero Docker, zero database, zero running server required.
+
+**Q: How do you handle bidirectional relationships in a single database row?**
+Canonical ordering — always store the smaller UUID as requester_id. A CHECK constraint enforces this at the database level. All application queries sort IDs before lookup. This prevents duplicate rows for the same pair regardless of who initiated the relationship.
+
+**Q: How do you prevent duplicate friend requests?**
+The relationships table has a unique constraint on (requester_id, receiver_id) combined with canonical ordering. At the service layer, we check existing relationship status before inserting — blocked returns 403, pending returns 429, accepted returns 409. Rejected requests have a 24-hour cooldown tracked via updated_at.
+
+**Q: Why does unblock delete the relationship row instead of updating status?**
+After unblocking, there is no natural state to revert to. The relationship history is gone. Deleting the row lets both users start fresh — either can send a new buddy request as if they never connected.
+
+**Q: How do internal services identify the calling user?**
+The API Gateway extracts and verifies the JWT, then forwards the user identity as an X-User-Id header. Internal services read this header and trust it — they never touch the JWT directly. This keeps auth logic centralized in the Gateway.
