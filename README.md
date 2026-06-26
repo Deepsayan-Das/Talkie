@@ -73,6 +73,18 @@ Each service has its own `.env.example`. Copy it to `.env` and fill in real valu
 
 In production: use Kubernetes ConfigMaps for non-sensitive config, Kubernetes Secrets for credentials.
 
+### API Gateway `.env.example`
+```bash
+PORT=3000
+CORS_ORIGIN=http://localhost:3000
+JWT_SECRET=your_jwt_secret
+AUTH_SERVICE_URL=http://localhost:3001
+USER_SERVICE_URL=http://localhost:3002
+CHAT_SERVICE_URL=http://localhost:3003
+FILE_SERVICE_URL=http://localhost:3004
+NOTIFICATION_SERVICE_URL=http://localhost:3005
+```
+
 ### Auth Service `.env.example`
 ```bash
 PORT=3001
@@ -141,6 +153,40 @@ Redis stores blacklisted JWT tokens. If Redis restarts without persistence, a bl
 **Owns:** Routing, rate limiting, JWT signature verification, CORS, request logging
 **Does not own:** Auth business logic, user data, chat logic
 **Critical distinction:** Gateway *verifies* tokens. Auth Service *issues* tokens. These are different concerns.
+
+#### Middleware Pipeline (applied in order)
+```
+Incoming request
+  → CORS check          (origin allowlist, preflight handling)
+  → Request logger      (method, path, status, latency)
+  → Global rate limiter (1000 req / 10 min per IP — all routes)
+  → Auth rate limiter   (20 req / 15 min per IP — /auth/* only)
+  → JWT verification    (protected routes only — extracts id, injects X-User-Id header)
+  → http-proxy-middleware (forward to target service, 502 on service error)
+```
+
+#### Route Config (`config/routes.ts`)
+| Prefix | Target | Protected | Rate Limited (auth) |
+|---|---|---|---|
+| /auth/register | AUTH_SERVICE_URL | ❌ | ✅ |
+| /auth/login | AUTH_SERVICE_URL | ❌ | ✅ |
+| /auth/verify/:token | AUTH_SERVICE_URL | ❌ | ✅ |
+| /auth | AUTH_SERVICE_URL | ✅ | ✅ |
+| /user | USER_SERVICE_URL | ✅ | ❌ |
+| /chat | CHAT_SERVICE_URL | ✅ | ❌ |
+| /file | FILE_SERVICE_URL | ✅ | ❌ |
+| /notification | NOTIFICATION_SERVICE_URL | ✅ | ❌ |
+
+**Partial auth routes:** Express matches routes in registration order. Specific prefixes (`/auth/register`, `/auth/login`, `/auth/verify/:token`) are registered before the catch-all `/auth` prefix — more specific routes win, so public endpoints bypass JWT verification while all other auth routes remain protected.
+
+#### CORS
+Custom middleware (not the `cors` npm package). Reads `CORS_ORIGIN` from env, checks incoming `Origin` header against an allowlist, sets `Access-Control-Allow-*` headers, handles preflight `OPTIONS` with a `200` short-circuit.
+
+#### JWT Verification (`middleware/jwtVerify.middleware.ts`)
+Extracts Bearer token from `Authorization` header → `jwt.verify()` against `JWT_SECRET` → attaches decoded payload to `req.user` → injects `X-User-Id` header for downstream services. Returns `401` for missing or invalid tokens.
+
+#### Proxy (`proxy.ts`)
+`http-proxy-middleware` with `changeOrigin: true`. On upstream error: `502 Service unavailable`. No path rewriting — prefixes are preserved as-is into the target service.
 
 ### Auth Service
 **Owns:** Credentials, password hashing, JWT issuance, refresh token rotation, email verification tokens, RBAC role assignment
@@ -494,7 +540,7 @@ REDIS_PORT=6379
 | 1 | ✅ Done | Docker Compose — PostgreSQL, MongoDB, Redis |
 | 2 | ✅ Done | Auth Service — JWT, refresh tokens, RBAC, email verification, tests |
 | 3 | ✅ Done | User Service — profiles, relationships, buddy request lifecycle |
-| 4 | ⏳ | API Gateway — routing, rate limiting, JWT verification |
+| 4 | ✅ Done | API Gateway — routing, rate limiting, JWT verification, CORS, proxy |
 | 5 | ⏳ | Chat Service — rooms, messages, Socket.IO |
 | 6 | ⏳ | File Service — upload, S3, metadata |
 | 7 | ⏳ | Notification Service — email, push, in-app |
@@ -548,3 +594,9 @@ After unblocking, there is no natural state to revert to. The relationship histo
 
 **Q: How do internal services identify the calling user?**
 The API Gateway extracts and verifies the JWT, then forwards the user identity as an X-User-Id header. Internal services read this header and trust it — they never touch the JWT directly. This keeps auth logic centralized in the Gateway.
+
+**Q: How does the API Gateway handle partial auth routes?**
+Specific prefixes (`/auth/register`, `/auth/login`, `/auth/verify/:token`) are registered as unprotected routes before the catch-all `/auth` prefix. Express matches routes in registration order — more specific routes win. This means public auth endpoints bypass JWT verification while every other `/auth/*` route (e.g. `/auth/logout`, `/auth/refresh`) requires a valid token.
+
+**Q: Why build a custom API Gateway instead of using Kong or Nginx?**
+For a portfolio project, a hand-rolled gateway demonstrates understanding of the underlying concerns — middleware ordering, JWT verification, rate limiting strategy, CORS policy, and proxy behaviour. Production systems would use a managed gateway (Kong, AWS API Gateway, or Nginx) for observability, plugin ecosystems, and operational simplicity.
