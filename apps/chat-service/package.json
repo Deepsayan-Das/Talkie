@@ -1,8 +1,17 @@
 {
-  "name": "@talkie/chat-service",
+  "name": "chat-service",
   "version": "1.0.0",
-  "private": true,
-  "scripts": {},
-  "dependencies": {},
-  "devDependencies": {}
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "^9.7.2"
+  }
 }
