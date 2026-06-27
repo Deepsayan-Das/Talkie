@@ -167,3 +167,59 @@ export const sendMessage = async (roomId: string, userId: string, content: strin
     const message = await MessageRepository.createMessage(roomId, userId, content, attachments || []);
     return message;
 }
+
+export const updateMessage = async (roomId: string, messageId: string, userId: string, content: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) {
+        throw new Error("Room not found");
+    }
+    const user = room.members.find((member) => member.userId === userId);
+    if (!user) {
+        throw new Error("user not the member of the group");
+    }
+
+    const message = await MessageRepository.findMessageById(messageId);
+    if (!message) {
+        throw new Error("Message not found");
+    }
+    if (message.senderId !== userId) {
+        throw new Error("You are not allowed to edit this message");
+    }
+
+    const updated = await MessageRepository.updateMessage(messageId, content);
+    return updated;
+}
+
+export const deleteMessage = async (roomId: string, messageId: string, userId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) {
+        throw new Error("Room not found");
+    }
+    const user = room.members.find((member) => member.userId === userId);
+    if (!user) {
+        throw new Error("user not the member of the group");
+    }
+
+    const message = await MessageRepository.findMessageById(messageId);
+    if (!message) {
+        throw new Error("Message not found");
+    }
+    if (message.senderId !== userId) {
+        throw new Error("You are not allowed to delete this message");
+    }
+
+    await MessageRepository.softDeleteMessage(messageId);
+}
+
+export const markMessageAsSeen = async (roomId: string, messageId: string, userId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) {
+        throw new Error("Room not found");
+    }
+    const user = room.members.find((member) => member.userId === userId);
+    if (!user) {
+        throw new Error("user not the member of the group");
+    }
+    await MessageRepository.markAsSeen(messageId, userId);
+}
+

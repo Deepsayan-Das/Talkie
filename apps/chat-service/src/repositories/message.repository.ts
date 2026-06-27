@@ -16,6 +16,10 @@ export const findMessagesByRoomId = async (roomId: string, page: number = 1, lim
         .limit(limit);
 }
 
+export const findMessageById = async (messageId: string) => {
+    return await Message.findById(messageId);
+}
+
 export const updateMessage = async (messageId: string, content: string) => {
     return await Message.findByIdAndUpdate(messageId, {
         content
