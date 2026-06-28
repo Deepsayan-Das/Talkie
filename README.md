@@ -200,10 +200,18 @@ Extracts Bearer token from `Authorization` header → `jwt.verify()` against `JW
 **Owns:** Chat rooms, messages, timestamps, delivery status, typing indicators, room membership
 **Does not own:** File binaries, notification dispatch, user credentials
 
-### File Service
-**Owns:** File upload orchestration, S3 storage integration, file metadata (name, size, type, owner, URL)
-**Does not own:** Chat logic, notification logic, auth
+**Real-time architecture:**
+Socket.IO runs on the same HTTP server as REST. JWT is verified at connection time via socket.handshake.auth.token — not per-event. Once connected, socket.data.userId is trusted for the lifetime of the connection.
 
+### File Service
+**Owns:** File upload orchestration, MinIO/S3 storage, file metadata, presigned URL generation
+**Does not own:** Chat logic, notification logic, user credentials
+
+**Why presigned URLs?**
+Files are private in MinIO. Instead of making objects publicly accessible, the File Service generates short-lived signed URLs (default 1 hour) that give the client temporary direct access. This is the production-standard pattern used by Slack, Notion, and Discord.
+
+**Why MinIO locally?**
+MinIO is S3-compatible — the same AWS SDK code works against MinIO in dev and real AWS S3 in production. Switching requires only three env variable changes: endpoint, access key, secret key.
 ### Notification Service
 **Owns:** When and what to send — email dispatch, push, in-app notification queue
 **Does not own:** Message content (receives a payload only), file storage, user credentials
@@ -343,6 +351,40 @@ The API Gateway verifies the JWT and forwards the decoded user identity as X-Use
 
 ---
 
+## Chat Service — REST Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | /chat/room | Create room or return existing DM |
+| GET | /chat/room | Get all rooms for current user |
+| GET | /chat/room/:roomId | Get room details |
+| PATCH | /chat/room/:roomId | Update group (admin only) |
+| DELETE | /chat/room/:roomId | Delete group (owner only) |
+| POST | /chat/room/:roomId/member | Add member (admin only) |
+| DELETE | /chat/room/:roomId/member | Remove member (admin or self) |
+| PATCH | /chat/room/:roomId/member/:memberId/promote | Promote to admin |
+| PATCH | /chat/room/:roomId/member/:memberId/demote | Demote to member |
+| GET | /chat/room/:roomId/messages | Fetch paginated message history |
+
+## Chat Service — Socket Events
+
+| Direction | Event | Payload | Description |
+|---|---|---|---|
+| client → server | joinRoom | roomId | Join a room channel |
+| client → server | leaveRoom | roomId | Leave a room channel |
+| client → server | sendMessage | { roomId, content, attachments? } | Send a message |
+| client → server | editMessage | { roomId, messageId, content } | Edit own message |
+| client → server | deleteMessage | { roomId, messageId } | Soft delete own message |
+| client → server | markAsSeen | { roomId, messageId } | Mark message as seen |
+| client → server | typing | { roomId } | Broadcast typing indicator |
+| client → server | stopTyping | { roomId } | Broadcast stop typing |
+| server → client | newMessage | message object | New message in room |
+| server → client | messageEdited | updated message | Message was edited |
+| server → client | messageDeleted | { messageId } | Message was soft deleted |
+| server → client | messageSeen | { messageId, userId, seenAt } | Read receipt update |
+| server → client | userTyping | { userId } | Someone is typing |
+| server → client | userStoppedTyping | { userId } | Someone stopped typing |
+
 ## Database Schema (auth_db)
 
 Tables are created via Knex migrations — not raw SQL. Migrations live in each service under `src/db/migrations/`.
@@ -427,6 +469,21 @@ This prevents duplicate rows and makes bidirectional lookups O(1).
 
 **Why not a follow model?**
 Talkie is a chat app. A one-sided connection makes no sense — you cannot have a conversation with someone who didn't agree to it. Bidirectional friendship with explicit accept/reject is the correct model.
+
+## Database Schema (files_db)
+
+### files
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | |
+| owner_id | UUID | References auth_db users_auth(id) — no FK, cross-service boundary |
+| original_name | VARCHAR(255) | Original filename from client |
+| mime_type | VARCHAR(255) | e.g. image/jpeg, application/pdf |
+| size | INTEGER | File size in bytes |
+| storage_key | VARCHAR | Path in MinIO bucket e.g. uploads/{ownerId}/{timestamp}-{name} |
+| url | VARCHAR | Direct MinIO URL |
+| created_at | TIMESTAMP | DEFAULT now() |
+| updated_at | TIMESTAMP | DEFAULT now() |
 
 ---
 
@@ -540,9 +597,9 @@ REDIS_PORT=6379
 | 1 | ✅ Done | Docker Compose — PostgreSQL, MongoDB, Redis |
 | 2 | ✅ Done | Auth Service — JWT, refresh tokens, RBAC, email verification, tests |
 | 3 | ✅ Done | User Service — profiles, relationships, buddy request lifecycle |
-| 4 | ✅ Done | API Gateway — routing, rate limiting, JWT verification, CORS, proxy |
-| 5 | ⏳ | Chat Service — rooms, messages, Socket.IO |
-| 6 | ⏳ | File Service — upload, S3, metadata |
+| 4 | ✅ Done | API Gateway — routing, JWT verification, rate limiting, CORS |
+| 5 | ✅ Done | Chat Service — rooms, messages, Socket.IO real-time |
+| 6 | ✅ Done | File Service — upload, S3 storage, metadata, presigned URLs |
 | 7 | ⏳ | Notification Service — email, push, in-app |
 | 8 | ⏳ | Observability — logging, Prometheus, Grafana |
 | 9 | ⏳ | Kubernetes migration |
@@ -600,3 +657,26 @@ Specific prefixes (`/auth/register`, `/auth/login`, `/auth/verify/:token`) are r
 
 **Q: Why build a custom API Gateway instead of using Kong or Nginx?**
 For a portfolio project, a hand-rolled gateway demonstrates understanding of the underlying concerns — middleware ordering, JWT verification, rate limiting strategy, CORS policy, and proxy behaviour. Production systems would use a managed gateway (Kong, AWS API Gateway, or Nginx) for observability, plugin ecosystems, and operational simplicity.
+
+**Q: How does Socket.IO authentication work?**
+JWT is verified once at connection time via the handshake auth object. The decoded user identity is attached to socket.data.userId and trusted for the lifetime of the connection. Per-event auth would be redundant and expensive.
+
+**Q: Why use Socket.IO over raw WebSockets?**
+Socket.IO adds rooms, namespaces, automatic reconnection, and fallback to long-polling when WebSocket isn't available. Raw WebSockets require you to implement all of this yourself.
+
+**Q: How do you prevent users from editing other people's messages?**
+The service layer fetches the message before updating and checks senderId === userId. If they don't match, it throws a 403 equivalent error before touching the database.
+
+**Q: What is the singleton DM room pattern?**
+Before creating a DM room, the repository checks if a room already exists with exactly those two members and kind=dm. If it does, it returns the existing room. This prevents duplicate conversations between the same two users.
+**Q: Why not store files in PostgreSQL or on disk?**
+PostgreSQL BLOBs are slow and bloat the database. Server disk is ephemeral in Kubernetes — pods restart and lose local files. Object storage like S3/MinIO is designed for binary data, scales independently, and survives pod restarts.
+
+**Q: What is a presigned URL?**
+A time-limited signed URL generated by the server that gives the client temporary direct access to a private S3 object. The client fetches the file directly from MinIO/S3 — the file never passes through your service. Reduces server load and latency.
+
+**Q: How do you switch from MinIO to AWS S3 in production?**
+Change three env variables — MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY. The AWS SDK code is identical. This is the S3-compatible storage pattern.
+
+**Q: Why use multer memoryStorage instead of diskStorage?**
+diskStorage writes to the server's local filesystem first. In Kubernetes, that disk is ephemeral and not shared across pods. memoryStorage keeps the file in RAM as a Buffer, which is then immediately streamed to MinIO. No local disk dependency.
