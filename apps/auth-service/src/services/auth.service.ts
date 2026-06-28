@@ -3,10 +3,8 @@ import env from '../config/env'
 import { assignRole, createRefreshToken, createUser, createVerificationToken, deleteRefreshToken, findLatestVerificationToken, findRefreshToken, findUserByEmail, findUserById, findVerificationToken, getRolesByUserId, markTokensUsed, rotateRefreshToken, updateUserRole } from '../repositories/auth.repository';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import nodemailer from 'nodemailer';
-import { getTestAccount, getTransporter, initializeTransporter } from '../config/mailTransporter';
-import { verificationEmailTemplate } from '../templates/verification.email';
 import { blacklistToken } from '../utils/tokenBlacklist';
+import redis from '../config/redis';
 
 
 export const sendVerificationMail = async (user: any, email: string) => {
@@ -15,17 +13,13 @@ export const sendVerificationMail = async (user: any, email: string) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 1);
     await createVerificationToken(user.id, verificationTokenHash, expiresAt);
-    await initializeTransporter();
-    const testAcc = await getTestAccount();
-    const transporter = getTransporter();
-    const verificationUrl = `${env.client_url}/verify?token=${verificationToken}`
-    const info = await transporter.sendMail({
-        from: `"Chat App" <${testAcc.user}>`,
-        to: email,
-        subject: 'Email Verification',
-        html: verificationEmailTemplate(user.email, verificationUrl)
-    })
-    console.log('Preview URL:', nodemailer.getTestMessageUrl(info))
+
+    const verificationUrl = `${env.client_url}/verify?token=${verificationToken}`;
+
+    await redis.publish('auth.user.registered', JSON.stringify({
+        email,
+        verificationLink: verificationUrl
+    }));
 }
 
 

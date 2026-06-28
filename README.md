@@ -213,9 +213,11 @@ Files are private in MinIO. Instead of making objects publicly accessible, the F
 **Why MinIO locally?**
 MinIO is S3-compatible — the same AWS SDK code works against MinIO in dev and real AWS S3 in production. Switching requires only three env variable changes: endpoint, access key, secret key.
 ### Notification Service
-**Owns:** When and what to send — email dispatch, push, in-app notification queue
-**Does not own:** Message content (receives a payload only), file storage, user credentials
+**Owns:** Email dispatch, notification templating
+**Does not own:** Token generation, user data, message content
 
+**Why async events instead of direct REST calls?**
+Auth Service publishes to Redis and moves on immediately. Notification Service picks up the event and sends the email independently. Registration never fails because the email provider is down. This is the fire-and-forget pattern.
 ---
 
 ## Communication Patterns
@@ -600,7 +602,7 @@ REDIS_PORT=6379
 | 4 | ✅ Done | API Gateway — routing, JWT verification, rate limiting, CORS |
 | 5 | ✅ Done | Chat Service — rooms, messages, Socket.IO real-time |
 | 6 | ✅ Done | File Service — upload, S3 storage, metadata, presigned URLs |
-| 7 | ⏳ | Notification Service — email, push, in-app |
+| 7 | ✅ Done | Notification Service — Redis pub/sub, email via nodemailer |
 | 8 | ⏳ | Observability — logging, Prometheus, Grafana |
 | 9 | ⏳ | Kubernetes migration |
 | 10 | ⏳ | CI/CD — GitHub Actions, registry, deploy |
@@ -680,3 +682,9 @@ Change three env variables — MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KE
 
 **Q: Why use multer memoryStorage instead of diskStorage?**
 diskStorage writes to the server's local filesystem first. In Kubernetes, that disk is ephemeral and not shared across pods. memoryStorage keeps the file in RAM as a Buffer, which is then immediately streamed to MinIO. No local disk dependency.
+
+**Q: How does the Notification Service know when to send an email?**
+It subscribes to Redis Pub/Sub channels. Auth Service publishes an event like auth.user.registered with email and verification link. Notification Service receives it and sends the email. The two services never call each other directly.
+
+**Q: Why move email sending out of Auth Service?**
+Single responsibility. Auth Service owns credentials and tokens — not email delivery. If the email provider is down, Auth should still register the user successfully. Decoupling via events makes the system more resilient.
