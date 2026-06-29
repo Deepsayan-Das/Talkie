@@ -3,19 +3,20 @@ import env from './config/env';
 import { initializeTransporter } from './config/mailer';
 import redis from './config/redis';
 import { initAuthSubscriber } from './subscribers/auth.subscriber';
+import logger from './config/logger';
 
 const bootstrap = async () => {
     // 1. Initialize mailer (creates Ethereal test account + transporter)
     await initializeTransporter();
-    console.log('[Mailer] Initialized');
+    logger.info('[Mailer] Initialized');
 
     // 2. Connect Redis
     await redis.connect();
-    console.log('[Redis] Connected');
+    logger.info('[Redis] Connected');
 
     // 3. Start subscriber (listens for auth events)
     await initAuthSubscriber();
-    console.log('[Subscriber] Auth subscriber ready');
+    logger.info('[Subscriber] Auth subscriber ready');
 
     // 4. Start Express
     const app = express();
@@ -26,11 +27,11 @@ const bootstrap = async () => {
     });
 
     app.listen(env.port, () => {
-        console.log(`[Server] Notification service running on port ${env.port}`);
+        logger.info(`Notification service running on port ${env.port}`);
     });
 };
 
 bootstrap().catch((err) => {
-    console.error('[Fatal] Failed to start notification service:', err);
+    logger.error('Fatal error — notification service failed to start', { error: err.message });
     process.exit(1);
 });

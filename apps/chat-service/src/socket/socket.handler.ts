@@ -1,35 +1,41 @@
 import { Server, Socket } from "socket.io";
-import { createServer, Server as HttpServer } from "http";
+import { Server as HttpServer } from "http";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import * as ChatService from "../services/chat.service";
-;
+import logger from "../config/logger";
 
 export const initSocketHandler = (httpServer: HttpServer) => {
     const io = new Server(httpServer, {
         cors: { origin: process.env.CLIENT_ORIGIN || "http://localhost:3000" }
     });
+
     io.use(async (socket, next) => {
         try {
             const token = socket.handshake.auth.token?.split(' ')[1];
-            if (!token) return next(new Error("Unauthorized"));
+            if (!token) {
+                logger.warn('Socket connection rejected — no token provided', { socketId: socket.id });
+                return next(new Error("Unauthorized"));
+            }
             const payload = jwt.verify(token, process.env.JWT_SECRET!);
             socket.data.userId = (payload as JwtPayload).id;
             next();
         } catch {
+            logger.warn('Socket connection rejected — invalid or expired token', { socketId: socket.id });
             next(new Error("Unauthorized"));
         }
     });
 
     io.on('connection', (socket: Socket) => {
-        console.log(`Connection established at ${new Date()} socketId : ${socket.id}`);
-        console.log('User connected : ' + socket.data.userId);
+        logger.info('Socket connection established', { socketId: socket.id, userId: socket.data.userId });
 
         socket.on('joinRoom', async (roomId: string) => {
             socket.join(roomId);  // joins the Socket.IO room channel
+            logger.info('User joined room', { socketId: socket.id, userId: socket.data.userId, roomId });
         });
 
         socket.on('leaveRoom', async (roomId: string) => {
             socket.leave(roomId);
+            logger.info('User left room', { socketId: socket.id, userId: socket.data.userId, roomId });
         });
 
         // ── sendMessage ──────────────────────────────────────────────────────────
@@ -41,6 +47,7 @@ export const initSocketHandler = (httpServer: HttpServer) => {
             attachments?: { url: string; contentType: string; fileSize: number }[];
         }) => {
             try {
+                logger.info('Sending message', { userId: socket.data.userId, roomId: data.roomId });
                 const message = await ChatService.sendMessage(
                     data.roomId,
                     socket.data.userId,
@@ -48,7 +55,9 @@ export const initSocketHandler = (httpServer: HttpServer) => {
                     data.attachments
                 );
                 io.to(data.roomId).emit('newMessage', message);
+                logger.info('Message sent successfully', { userId: socket.data.userId, roomId: data.roomId, messageId: message.id });
             } catch (err: any) {
+                logger.error('sendMessage failed', { userId: socket.data.userId, roomId: data.roomId, error: err.message });
                 socket.emit('error', { event: 'sendMessage', message: err.message });
             }
         });
@@ -62,6 +71,7 @@ export const initSocketHandler = (httpServer: HttpServer) => {
             content: string;
         }) => {
             try {
+                logger.info('Editing message', { userId: socket.data.userId, roomId: data.roomId, messageId: data.messageId });
                 const updated = await ChatService.updateMessage(
                     data.roomId,
                     data.messageId,
@@ -69,7 +79,9 @@ export const initSocketHandler = (httpServer: HttpServer) => {
                     data.content
                 );
                 io.to(data.roomId).emit('messageEdited', updated);
+                logger.info('Message edited successfully', { userId: socket.data.userId, messageId: data.messageId });
             } catch (err: any) {
+                logger.error('editMessage failed', { userId: socket.data.userId, messageId: data.messageId, error: err.message });
                 socket.emit('error', { event: 'editMessage', message: err.message });
             }
         });
@@ -82,13 +94,16 @@ export const initSocketHandler = (httpServer: HttpServer) => {
             messageId: string;
         }) => {
             try {
+                logger.info('Deleting message', { userId: socket.data.userId, roomId: data.roomId, messageId: data.messageId });
                 await ChatService.deleteMessage(
                     data.roomId,
                     data.messageId,
                     socket.data.userId
                 );
                 io.to(data.roomId).emit('messageDeleted', { messageId: data.messageId });
+                logger.info('Message deleted successfully', { userId: socket.data.userId, messageId: data.messageId });
             } catch (err: any) {
+                logger.error('deleteMessage failed', { userId: socket.data.userId, messageId: data.messageId, error: err.message });
                 socket.emit('error', { event: 'deleteMessage', message: err.message });
             }
         });
@@ -111,7 +126,9 @@ export const initSocketHandler = (httpServer: HttpServer) => {
                     userId: socket.data.userId,
                     seenAt: new Date()
                 });
+                logger.info('Message marked as seen', { userId: socket.data.userId, messageId: data.messageId, roomId: data.roomId });
             } catch (err: any) {
+                logger.error('markAsSeen failed', { userId: socket.data.userId, messageId: data.messageId, error: err.message });
                 socket.emit('error', { event: 'markAsSeen', message: err.message });
             }
         });
@@ -131,8 +148,7 @@ export const initSocketHandler = (httpServer: HttpServer) => {
         });
 
         socket.on('disconnect', () => {
-            console.log(`Connection terminated at ${new Date()} socketId : ${socket.id}`);
-            console.log('User disconnected : ' + socket.data.userId);
+            logger.info('Socket connection terminated', { socketId: socket.id, userId: socket.data.userId });
         });
     });
 };

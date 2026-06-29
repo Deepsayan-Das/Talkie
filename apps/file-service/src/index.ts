@@ -1,6 +1,7 @@
 import express from 'express';
 import env from './config/env';
 import fileRouter from './routes/file.routes';
+import logger from './config/logger';
 
 const app = express();
 
@@ -10,5 +11,5 @@ app.use(express.json());
 app.use('/files', fileRouter);
 
 app.listen(port, () => {
-    console.log(`File service is running on port ${port}`);
+    logger.info(`File service is running on port ${port}`);
 });

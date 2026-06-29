@@ -1,4 +1,5 @@
 import { getTransporter, getTestAccount } from '../config/mailer';
+import logger from '../config/logger';
 
 const verificationEmailTemplate = (username: string, verificationUrl: string): string => {
     return `<!DOCTYPE html>
@@ -161,20 +162,28 @@ export const sendVerificationMail = async (
     email: string,
     verificationUrl: string
 ): Promise<void> => {
+    logger.info('Sending verification email', { to: email });
     const transporter = getTransporter();
     const html = verificationEmailTemplate(email, verificationUrl);
 
-    const info = await transporter.sendMail({
-        from: '"Talkie" <no-reply@talkie.app>',
-        to: email,
-        subject: 'Verify your Talkie account',
-        html,
-    });
+    try {
+        const info = await transporter.sendMail({
+            from: '"Talkie" <no-reply@talkie.app>',
+            to: email,
+            subject: 'Verify your Talkie account',
+            html,
+        });
 
-    // Log the Ethereal preview URL so you can view the email during dev
-    const testAccount = getTestAccount();
-    if (testAccount) {
-        const previewUrl = `https://ethereal.email/message/${info.messageId}`;
-        console.log(`[Mail] Preview URL: ${previewUrl}`);
+        // Log the Ethereal preview URL so you can view the email during dev
+        const testAccount = getTestAccount();
+        if (testAccount) {
+            const previewUrl = `https://ethereal.email/message/${info.messageId}`;
+            logger.info('Verification email sent (Ethereal preview)', { to: email, previewUrl });
+        } else {
+            logger.info('Verification email sent', { to: email, messageId: info.messageId });
+        }
+    } catch (err: any) {
+        logger.error('Failed to send verification email', { to: email, error: err.message });
+        throw err;
     }
 };

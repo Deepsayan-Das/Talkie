@@ -6,6 +6,7 @@ import { jwtVerifyMiddleware } from "./middleware/jwtVerify.middleware";
 import { globalRateLimiter, authRateLimiter } from "./middleware/ratelimitter.middleware";
 import { routes } from "./config/routes";
 import { createProxy } from "./proxy";
+import logger from "./config/logger";
 
 const app = express();
 app.use(express.json());
@@ -32,5 +33,5 @@ routes.forEach((route) => {
 });
 
 app.listen(env.port, () => {
-    console.log(`API Gateway started on port ${env.port}`);
+    logger.info(`API Gateway started on port ${env.port}`);
 });
