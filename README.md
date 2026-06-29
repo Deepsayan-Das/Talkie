@@ -145,6 +145,33 @@ Cost. Separate logical DBs provide key isolation at zero cost. In production, se
 **Why does Redis need a persistent volume?**
 Redis stores blacklisted JWT tokens. If Redis restarts without persistence, a blacklisted token becomes valid again — that is a security vulnerability, not just data loss.
 
+### Observability Stack
+
+| Tool | Port | Purpose |
+|---|---|---|
+| Prometheus | 9090 | Scrapes and stores metrics from all services |
+| Grafana | 3100 | Visualizes metrics, dashboards, alerting |
+
+**Metrics collected per service:**
+- Process CPU usage
+- Event loop lag
+- Process memory and heap usage
+- HTTP request counter (method, route, status)
+- HTTP request duration histogram (P50, P95, P99)
+
+**Why structured logging over console.log?**
+JSON logs are searchable, filterable, and parseable by log aggregation tools like Loki, Datadog, or CloudWatch. `console.log` is useless in production — you can't query it, alert on it, or correlate it across services.
+
+**Log level convention:**
+| Level | When used |
+|---|---|
+| info | Normal operations — startup, user actions, state transitions |
+| warn | Expected domain errors — invalid credentials, blocked users |
+| error | Unexpected failures — DB errors, S3 failures, unhandled exceptions |
+
+**Prometheus scrape config:**
+Services run on host machine during development. Prometheus reaches them via `host.docker.internal` — Docker's built-in hostname that resolves to the host machine from inside a container.
+
 ---
 
 ## Service Boundaries
@@ -218,6 +245,10 @@ MinIO is S3-compatible — the same AWS SDK code works against MinIO in dev and 
 
 **Why async events instead of direct REST calls?**
 Auth Service publishes to Redis and moves on immediately. Notification Service picks up the event and sends the email independently. Registration never fails because the email provider is down. This is the fire-and-forget pattern.
+
+### Observability Layer
+**Not a service — cross-cutting infrastructure**
+Every service exposes `/metrics` (Prometheus format) and emits structured JSON logs via winston. Prometheus scrapes all services every 15 seconds. Grafana visualizes the time-series data.
 ---
 
 ## Communication Patterns
@@ -603,7 +634,7 @@ REDIS_PORT=6379
 | 5 | ✅ Done | Chat Service — rooms, messages, Socket.IO real-time |
 | 6 | ✅ Done | File Service — upload, S3 storage, metadata, presigned URLs |
 | 7 | ✅ Done | Notification Service — Redis pub/sub, email via nodemailer |
-| 8 | ⏳ | Observability — logging, Prometheus, Grafana |
+| 8 | ✅ Done | Observability — winston logging, Prometheus metrics, Grafana dashboards |
 | 9 | ⏳ | Kubernetes migration |
 | 10 | ⏳ | CI/CD — GitHub Actions, registry, deploy |
 
@@ -688,3 +719,15 @@ It subscribes to Redis Pub/Sub channels. Auth Service publishes an event like au
 
 **Q: Why move email sending out of Auth Service?**
 Single responsibility. Auth Service owns credentials and tokens — not email delivery. If the email provider is down, Auth should still register the user successfully. Decoupling via events makes the system more resilient.
+
+**Q: How do you monitor a microservices system?**
+Three pillars — logs, metrics, traces. Winston for structured JSON logs with service name in every entry. prom-client exposes a /metrics endpoint on each service. Prometheus scrapes every 15 seconds and stores time-series data. Grafana visualizes CPU, memory, event loop lag, and HTTP latency across all services in real time.
+
+**Q: What metrics do you track?**
+Default Node.js metrics via prom-client collectDefaultMetrics — CPU, memory, heap, event loop lag. Custom HTTP metrics — request counter labeled by method/route/status, and a duration histogram with buckets at 10/50/100/200/500/1000ms for P95 latency analysis.
+
+**Q: Why JSON logs instead of plain text?**
+JSON logs are machine-parseable. You can filter by service, level, or any field. Plain text requires regex parsing which is fragile. In production, JSON logs feed directly into log aggregation tools like Loki or Datadog without transformation.
+
+**Q: How do you get resume metrics like "handles 500 concurrent users"?**
+Run k6 load tests against the API Gateway while Grafana is open. k6 ramps up concurrent users, hammers endpoints, and reports P95 latency and error rate. Grafana shows the system's behavior under load in real time — memory spikes, event loop lag, request throughput. Screenshot that dashboard during peak load for the resume metric.

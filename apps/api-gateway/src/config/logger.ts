@@ -1,4 +1,4 @@
-import { createLogger } from '../../../shared-utils/logger';
+import { createLogger } from 'shared-utils';
 
 /**
  * API-gateway logger.

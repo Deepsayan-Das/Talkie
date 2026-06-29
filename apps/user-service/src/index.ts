@@ -3,6 +3,7 @@ import env from './config/env'
 import db from './db/knex'
 import router from './routes/user.routes'
 import logger from './config/logger'
+import { metrics } from './config/metrics'
 const app = express()
 
 app.use(express.json())
@@ -11,6 +12,10 @@ app.use(express.json())
 
 // TODO: mount user router
 app.use('/api/v1/user', router)
+app.get('/metrics', async (req, res) => {
+    res.set('Content-Type', metrics.register.contentType);
+    res.send(await metrics.register.metrics());
+});
 
 const startup = async () => {
     try {

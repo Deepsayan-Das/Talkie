@@ -7,14 +7,21 @@ import { globalRateLimiter, authRateLimiter } from "./middleware/ratelimitter.mi
 import { routes } from "./config/routes";
 import { createProxy } from "./proxy";
 import logger from "./config/logger";
+import { metrics } from "./config/metrics";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.get('/metrics', async (req, res) => {
+    res.set('Content-Type', metrics.register.contentType);
+    res.send(await metrics.register.metrics());
+});
+
 app.use(corsMiddleware);
 app.use(loggerMiddleware);
 app.use(globalRateLimiter);
+
 
 routes.forEach((route) => {
     const middlewares: express.RequestHandler[] = [];

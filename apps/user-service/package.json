@@ -19,7 +19,8 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "knex": "^3.2.10",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "shared-utils": "*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

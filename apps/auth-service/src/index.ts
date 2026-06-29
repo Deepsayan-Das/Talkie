@@ -4,6 +4,7 @@ import db from './db/knex';
 import authRouter from './routes/auth.routes'
 import cookieParser from 'cookie-parser';
 import logger from './config/logger';
+import { metrics } from './config/metrics';
 
 const app = express();
 
@@ -11,6 +12,10 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.use('/api/v1/auth', authRouter);
+app.get('/metrics', async (req, res) => {
+    res.set('Content-Type', metrics.register.contentType);
+    res.send(await metrics.register.metrics());
+});
 
 const startup = async () => {
     try {

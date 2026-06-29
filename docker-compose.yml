@@ -6,6 +6,8 @@ volumes:
   mongo-data:
   redis-data:
   minio-data:
+  prometheus-data:
+  grafana-data:
 services:
   postgres:
     image: postgres:17
@@ -77,3 +79,27 @@ services:
       timeout: 30s
       retries: 5
       start_period: 10s
+  prometheus:
+    image: prom/prometheus:v2.37.0
+    container_name: prometheus_c
+    volumes:
+      - ./infrastructure/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - talkie-net
+
+  grafana:
+    image: grafana/grafana:9.5.0
+    container_name: grafana_c
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3100:3000"
+    networks:
+      - talkie-net
+    depends_on:
+      - prometheus

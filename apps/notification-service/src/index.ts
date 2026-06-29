@@ -4,6 +4,7 @@ import { initializeTransporter } from './config/mailer';
 import redis from './config/redis';
 import { initAuthSubscriber } from './subscribers/auth.subscriber';
 import logger from './config/logger';
+import { metrics } from './config/metrics';
 
 const bootstrap = async () => {
     // 1. Initialize mailer (creates Ethereal test account + transporter)
@@ -25,7 +26,10 @@ const bootstrap = async () => {
     app.get('/health', (_req, res) => {
         res.status(200).json({ status: 'ok', service: 'notification-service' });
     });
-
+    app.get('/metrics', async (req, res) => {
+        res.set('Content-Type', metrics.register.contentType);
+        res.send(await metrics.register.metrics());
+    });
     app.listen(env.port, () => {
         logger.info(`Notification service running on port ${env.port}`);
     });
