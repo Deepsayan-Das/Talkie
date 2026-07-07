@@ -8,6 +8,7 @@ export const corsMiddleware = (req: Request, res: Response, next: NextFunction) 
     if (!allowedOrigins.includes(origin)) {
         return res.status(403).json({ success: false, message: "Origin not allowed" });
     }
+    res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE, PUT, PATCH");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, X-Forwarded-For");
     res.setHeader("Access-Control-Allow-Credentials", "true");

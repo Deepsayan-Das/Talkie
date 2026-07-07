@@ -4,6 +4,10 @@ import logger from "../config/logger";
 
 export const sendBuddyReq = async (sender_id: string, receiver_id: string) => {
     logger.info('Sending buddy request', { sender_id, receiver_id });
+    if (sender_id === receiver_id) {
+        logger.warn('Buddy request blocked — cannot send request to yourself', { sender_id });
+        throw new Error("you cannot send a friend request to yourself");
+    }
     const relation = await getRelation(sender_id, receiver_id);
     if (!relation) {
         //no entry create e request with pending status 

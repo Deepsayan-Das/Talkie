@@ -4,7 +4,7 @@ import db from "../db/knex"
 import { UpdateUserData, UserProfile, Relationship, RelationshipStatus, UpdateRelationData } from "../models/user.model"
 
 export const findUserById = async (userId: string): Promise<UserProfile> => {
-    const user = await db<UserProfile>('users_profile').where({ id: userId }).first();
+    const user = await db<UserProfile>('users_profile').where({ user_id: userId }).first();
     if (!user) {
         throw new Error("user not found!");
     }
@@ -23,11 +23,16 @@ export const updateProfile = async (userId: string, data: UpdateUserData): Promi
     if (Object.keys(data).length === 0) {
         throw new Error("No fields provided to update!");
     }
-    const count = await db<UserProfile>('users_profile').where({ id: userId }).update(data);
+    // Try to update existing profile row
+    const count = await db<UserProfile>('users_profile').where({ user_id: userId }).update(data);
     if (count === 0) {
-        throw new Error("user not found!");
+        // Profile doesn't exist yet — create it (first onboarding save)
+        await db<UserProfile>('users_profile').insert({
+            user_id: userId,
+            ...data,
+        });
     }
-    return count;
+    return count || 1;
 }
 export const getRelation = async (userId: string, targetId: string): Promise<Relationship | null> => {
     const [first, second] = [userId, targetId].sort();

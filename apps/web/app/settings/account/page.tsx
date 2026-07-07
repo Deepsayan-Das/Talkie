@@ -1,8 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { JetBrains_Mono, Anybody } from 'next/font/google'
 import { Lock, Mail, AlertTriangle } from 'lucide-react'
+import toast, { Toaster } from 'react-hot-toast'
+import { useAuth } from '@/context/AuthContext'
 
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['400', '600', '700', '800'] })
 const anybody = Anybody({ subsets: ['latin'], weight: ['300', '400', '600'] })
@@ -16,9 +19,19 @@ const NAV_LINKS = [
 ]
 
 export default function AccountSettingsPage() {
+    const { user } = useAuth()
+    const [deleteConfirm, setDeleteConfirm] = useState('')
+
+    const handleDeleteAccount = () => {
+        if (deleteConfirm === 'delete my account') {
+            toast.error('Backend deletion not yet implemented.')
+            setDeleteConfirm('')
+        }
+    }
+
     return (
         <div className={`min-h-screen w-full bg-[#131313] flex ${jetbrains.className}`}>
-
+            <Toaster position='top-center' toastOptions={{ style: { background: '#252525', color: '#fff', border: '1px solid #ff4d00' } }} />
             {/* Sidebar nav */}
             <aside className='w-52 flex-shrink-0 bg-[#1c1c1c] border-r-2 border-[#2a2a2a] flex flex-col pt-12 px-4 gap-1'>
                 <p className={`text-[10px] uppercase tracking-widest text-[#444] mb-3 ${anybody.className}`}>Settings</p>
@@ -51,7 +64,7 @@ export default function AccountSettingsPage() {
                         </div>
                         <input
                             type='email'
-                            value='john.doe@example.com'
+                            value={user?.email ?? ''}
                             readOnly
                             className='bg-[#1c1c1c] border-b-2 border-[#2a2a2a] text-[#555] px-4 py-3 text-sm outline-none cursor-not-allowed'
                             style={{ clipPath: CLIP }}
@@ -103,19 +116,37 @@ export default function AccountSettingsPage() {
                     {/* Danger zone */}
                     <section className='flex flex-col gap-3 border-t-2 border-[#2a2a2a] pt-8'>
                         <h2 className={`text-xs font-bold uppercase tracking-widest text-red-500/60 ${anybody.className}`}>Danger Zone</h2>
-                        <div className='bg-[#1c1c1c] border-2 border-red-900/30 p-4 flex items-center justify-between' style={{ clipPath: CLIP }}>
+                        <div className='bg-[#1c1c1c] border-2 border-red-900/30 p-4 flex flex-col gap-4' style={{ clipPath: CLIP }}>
                             <div>
                                 <p className='text-red-400 text-sm font-bold'>Delete Account</p>
                                 <p className={`text-[#555] text-xs mt-0.5 ${anybody.className} font-light`}>Permanently delete your account and all data. Cannot be undone.</p>
                             </div>
-                            <button
-                                disabled
-                                title='Not available yet'
-                                className='px-4 h-9 text-xs font-bold text-red-400/30 bg-red-900/10 border-2 border-red-900/20 cursor-not-allowed flex-shrink-0'
-                                style={{ clipPath: CLIP_BTN }}
-                            >
-                                DELETE
-                            </button>
+                            
+                            <div className='flex flex-col gap-2'>
+                                <label className={`text-xs text-[#888] ${anybody.className}`}>Type <strong className='text-red-400'>delete my account</strong> below to confirm:</label>
+                                <div className='flex gap-2 items-stretch'>
+                                    <input 
+                                        type='text' 
+                                        value={deleteConfirm}
+                                        onChange={(e) => setDeleteConfirm(e.target.value)}
+                                        placeholder='delete my account'
+                                        className='flex-1 bg-[#252525] border-b-2 border-[#353535] text-white px-4 py-2 text-sm outline-none focus:border-red-500 transition-colors'
+                                        style={{ clipPath: CLIP }}
+                                    />
+                                    <button
+                                        disabled={deleteConfirm !== 'delete my account'}
+                                        onClick={handleDeleteAccount}
+                                        className={`px-6 text-xs font-bold transition-all ${
+                                            deleteConfirm === 'delete my account' 
+                                            ? 'bg-red-500 text-white hover:bg-red-600 active:scale-95' 
+                                            : 'text-red-400/30 bg-red-900/10 border-2 border-red-900/20 cursor-not-allowed'
+                                        }`}
+                                        style={{ clipPath: CLIP_BTN }}
+                                    >
+                                        DELETE
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </section>
                 </div>

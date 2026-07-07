@@ -1,8 +1,8 @@
 {
-  "name": "file-service",
+  "name": "@talkie/file-service",
   "version": "1.0.0",
+  "private": true,
   "description": "",
-  "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
@@ -21,7 +21,7 @@
     "express": "^5.2.1",
     "knex": "^3.3.0",
     "multer": "^2.2.0",
-    "shared-utils": "*"
+    "@talkie/shared-utils": "*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

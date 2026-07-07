@@ -16,8 +16,11 @@ export const registerController = async (req: Request, res: Response) => {
         const user = await registerUser(email, password);
         await sendVerificationMail(user, email);
         logger.info('User registered successfully', { userId: user.id, email });
-        // New registrations are always UNVERIFIED — only send accessToken cookie
-        res.status(201).json({ success: true, data: user })
+        res.cookie('refreshToken', user.refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'strict'
+        }).status(201).json({ success: true, data: user })
     }
     catch (error: any) {
         if (error.message === 'User already exists') {
@@ -40,20 +43,16 @@ export const loginController = async (req: Request, res: Response) => {
     try {
         logger.info('Login attempt', { email });
         const user = await loginUser(email, password);
-        if (user && user.role === 'UNVERIFIED') {
-            // Unverified — accessToken in body only, no refreshToken
-            logger.info('Unverified user logged in', { email });
-            res.status(200).json({ success: true, data: user })
-        } else {
-            // Verified — accessToken in body, refreshToken in httpOnly cookie
-            logger.info('User logged in successfully', { email });
-            res.cookie('refreshToken', user?.refreshToken, {
-                httpOnly: true,
-                secure: true,
-                sameSite: 'strict',
-                maxAge: 7 * 24 * 60 * 60 * 1000
-            }).status(200).json({ success: true, data: user })
+        logger.info('User logged in successfully', { email });
+        const cookieOptions: any = {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'strict'
+        };
+        if (user?.role !== 'UNVERIFIED') {
+            cookieOptions.maxAge = 7 * 24 * 60 * 60 * 1000;
         }
+        res.cookie('refreshToken', user?.refreshToken, cookieOptions).status(200).json({ success: true, data: user })
     }
     catch (error: any) {
         if (error.message === 'INVALID CREDENTIALS') {
@@ -148,12 +147,16 @@ export const rotateTokensController = async (req: Request, res: Response) => {
         const result = await rotateTokens(refreshToken);
         logger.info('Tokens rotated successfully');
         // accessToken in body, refreshToken in httpOnly cookie
-        res.cookie('refreshToken', result.refreshToken, {
+        const payload = jwt.decode(result.accessToken) as any;
+        const cookieOptions: any = {
             httpOnly: true,
             secure: true,
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000
-        }).status(200).json({ success: true, data: { accessToken: result.accessToken } })
+            sameSite: 'strict'
+        };
+        if (payload?.role !== 'UNVERIFIED') {
+            cookieOptions.maxAge = 7 * 24 * 60 * 60 * 1000;
+        }
+        res.cookie('refreshToken', result.refreshToken, cookieOptions).status(200).json({ success: true, data: { accessToken: result.accessToken } })
     } catch (error: any) {
         if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
             logger.warn('Token rotation — invalid or expired JWT');

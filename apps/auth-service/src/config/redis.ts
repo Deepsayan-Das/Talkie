@@ -5,7 +5,6 @@ const redis = new Redis({
     host: env.redis_host,
     port: env.redis_port,
     db: env.redis_db,
-    lazyConnect: true,
 })
 
 redis.on('connect', () => console.log('[Redis] Connected'));

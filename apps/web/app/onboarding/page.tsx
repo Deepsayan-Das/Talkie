@@ -1,9 +1,12 @@
 'use client'
 import React, { useState, useRef, useCallback } from 'react'
 import { JetBrains_Mono, Anybody } from 'next/font/google'
-import { useForm, Controller } from 'react-hook-form'
+import { useForm } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
-import toast, { Toaster } from 'react-hot-toast'
+import toast from 'react-hot-toast'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/context/AuthContext'
+import { updateUserProfile, uploadAvatar } from '@/lib/user'
 
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
 const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
@@ -29,6 +32,8 @@ type FormValues = {
 }
 
 const Page: React.FC = () => {
+    const router = useRouter()
+    const { accessToken, user } = useAuth()
     const {
         register,
         handleSubmit,
@@ -40,6 +45,7 @@ const Page: React.FC = () => {
     const [preview, setPreview] = useState<string | null>(null)
     const [fileError, setFileError] = useState<string | null>(null)
     const [isDragging, setIsDragging] = useState(false)
+    const [isSubmitting, setIsSubmitting] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
     const dragCounter = useRef(0)
 
@@ -98,16 +104,31 @@ const Page: React.FC = () => {
         if (inputRef.current) inputRef.current.value = ''
     }
 
-    const onSubmit = (data: FormValues) => {
-        // No backend connected yet — simulate success.
-        // If no file was provided, a fallback avatar is generated from the
-        // first letter of the username (see the live preview logic below).
-        const usingFallback = !file
-        toast.success(
-            usingFallback
-                ? `Profile created! We generated a default avatar from "${data.username[0].toUpperCase()}"`
-                : 'Profile created successfully!'
-        )
+    const onSubmit = async (data: FormValues) => {
+        const userId = user?.id
+        if (!userId) { toast.error('Not authenticated'); return }
+        setIsSubmitting(true)
+        try {
+            let avatarUrl: string | undefined
+            if (file) {
+                try {
+                    avatarUrl = await uploadAvatar(file)
+                } catch {
+                    toast.error('Avatar upload failed — saving profile without it')
+                }
+            }
+            await updateUserProfile(userId, {
+                displayName: data.username,
+                bio: data.bio || undefined,
+                avatar: avatarUrl,
+            })
+            toast.success('Profile saved! Let\'s go 🚀')
+            router.push('/chat')
+        } catch (err: any) {
+            toast.error(err.response?.data?.message ?? 'Could not save profile')
+        } finally {
+            setIsSubmitting(false)
+        }
     }
 
     const fallbackLetter = username?.trim()?.[0]?.toUpperCase() || '?'
@@ -115,14 +136,6 @@ const Page: React.FC = () => {
 
     return (
         <div className={`min-h-screen w-full relative flex items-center justify-center bg-[#1c1c1c] ${jetbrains.className} font-extrabold py-10`}>
-            <Toaster
-                position="top-center"
-                toastOptions={{
-                    style: { background: '#252525', color: '#fff', border: '1px solid #ff4d00', fontFamily: 'inherit' },
-                    success: { iconTheme: { primary: '#ff4d00', secondary: '#252525' } },
-                }}
-            />
-
             <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -132,7 +145,7 @@ const Page: React.FC = () => {
                 <div>
                     <h1 className="text-5xl font-black">TELL US ABOUT YOURSELF</h1>
                     <p className={`text-[#888] font-light mt-2 ${anybody.className}`}>
-                        Just a few details and you're set.
+                        Just a few details and you&apos;re set.
                     </p>
                 </div>
 
@@ -202,6 +215,7 @@ const Page: React.FC = () => {
                                         exit={{ opacity: 0, scale: 0.9 }}
                                         className="relative w-full h-full flex items-center justify-center"
                                     >
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img src={preview} alt="Preview" className="h-28 w-28 object-cover rounded-full" />
                                         <button
                                             type="button"
@@ -255,7 +269,7 @@ const Page: React.FC = () => {
                                 >
                                     {fallbackLetter}
                                 </div>
-                                No image yet — we'll generate this avatar from your username
+                                No image yet — we&apos;ll generate this avatar from your username
                             </div>
                         )}
                     </div>
@@ -280,9 +294,10 @@ const Page: React.FC = () => {
                     <motion.button
                         whileTap={{ scale: 0.97 }}
                         type="submit"
-                        className={`w-full h-12 bg-[#ff4d00] text-2xl mt-2 ${clipPath}`}
+                        disabled={isSubmitting}
+                        className={`w-full h-12 bg-[#ff4d00] text-2xl mt-2 ${clipPath} disabled:opacity-60`}
                     >
-                        CONTINUE
+                        {isSubmitting ? 'SAVING...' : 'CONTINUE'}
                     </motion.button>
                 </form>
             </motion.div>

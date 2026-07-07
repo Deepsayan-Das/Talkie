@@ -10,7 +10,7 @@ export const jwtVerifyMiddleware = (req: Request, res: Response, next: NextFunct
     try {
         const decodedToken = jwt.verify(token, env.jwt_secret);
         req.user = decodedToken;
-        req.headers["x-user-id"] = (decodedToken as any).id;
+        req.headers["x-user-id"] = (decodedToken as any).userId;
         next()
     }
     catch (error) {

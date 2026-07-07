@@ -1,4 +1,4 @@
-import { createLogger } from 'shared-utils';
+﻿import { createLogger } from '@talkie/shared-utils';
 
 /**
  * Auth-service logger.

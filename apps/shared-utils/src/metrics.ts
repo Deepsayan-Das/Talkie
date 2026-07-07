@@ -1,4 +1,4 @@
-import client from 'prom-client';
+﻿import client from 'prom-client';
 
 export const createMetrics = (serviceName: string) => {
     client.collectDefaultMetrics({

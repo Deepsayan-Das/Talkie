@@ -1,9 +1,20 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { JetBrains_Mono, Anybody } from 'next/font/google'
-import { ArrowLeft, MessageCircle, X, Check, UserMinus } from 'lucide-react'
+import { ArrowLeft, MessageCircle, X, Check, UserMinus, Loader2 } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { useAuth } from '@/context/AuthContext'
+import {
+    getAllRelations,
+    acceptBuddyRequest,
+    rejectBuddyRequest,
+    unblockUser,
+    getUserProfile,
+} from '@/lib/user'
+import { createRoom } from '@/lib/chat'
+import type { UserProfile, Relation } from '@/lib/user'
 
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['400', '600', '700', '800'] })
 const anybody = Anybody({ subsets: ['latin'], weight: ['300', '400', '600'] })
@@ -18,47 +29,113 @@ function avatarColor(s: string) {
 }
 
 type Tab = 'friends' | 'pending' | 'requests' | 'blocked'
-
 const TABS: Tab[] = ['friends', 'pending', 'requests', 'blocked']
-
-const DUMMY: Record<Tab, { id: string; username: string; displayName: string; isOnline?: boolean; bio?: string }[]> = {
-    friends: [
-        { id: '2', username: 'nova_ui',      displayName: 'Nova Chen',    isOnline: false, bio: 'UI/UX designer.' },
-        { id: '5', username: 'the_real_sam', displayName: 'Sam Torres',   isOnline: true,  bio: 'Open-source contributor.' },
-        { id: '7', username: 'kai.build',    displayName: 'Kai Müller',   isOnline: true,  bio: 'Backend dev, Go enthusiast.' },
-    ],
-    pending: [
-        { id: '1', username: 'alex_dev',     displayName: 'Alex Carter',  bio: 'Full-stack dev.' },
-        { id: '6', username: 'lena_rx',      displayName: 'Lena Fischer', bio: 'React Native dev.' },
-    ],
-    requests: [
-        { id: '3', username: 'rustacean99', displayName: 'Marcus Webb',   bio: 'Rust evangelist.' },
-    ],
-    blocked: [
-        { id: '4', username: 'priya.codes', displayName: 'Priya Sharma',  bio: 'ML engineer.' },
-    ],
+const LABELS: Record<Tab, string> = {
+    friends: 'Friends', pending: 'Sent', requests: 'Incoming', blocked: 'Blocked',
 }
 
-const LABELS: Record<Tab, string> = {
-    friends: 'Friends', pending: 'Pending', requests: 'Requests', blocked: 'Blocked',
+interface EnrichedUser extends UserProfile {
+    relationId: string
 }
 
 export default function BuddiesPage() {
     const router = useRouter()
+    const { user } = useAuth()
     const [tab, setTab] = useState<Tab>('friends')
-    const [data, setData] = useState(DUMMY)
+    const [loading, setLoading] = useState(true)
+    const [data, setData] = useState<Record<Tab, EnrichedUser[]>>({
+        friends: [], pending: [], requests: [], blocked: [],
+    })
 
-    const remove = (id: string) =>
+    // Fetch relations then enrich each with user profile
+    useEffect(() => {
+        if (!user) return
+        setLoading(true)
+        getAllRelations()
+            .then(async (relations: Relation[]) => {
+                const groups: Record<Tab, EnrichedUser[]> = { friends: [], pending: [], requests: [], blocked: [] }
+
+                await Promise.all(relations.map(async (rel) => {
+                    const iAmRequester = rel.requester_id === user.id
+                    const otherId = iAmRequester ? rel.receiver_id : rel.requester_id
+
+                    let profile: UserProfile
+                    try {
+                        profile = await getUserProfile(otherId)
+                    } catch {
+                        return
+                    }
+
+                    const enriched: EnrichedUser = { ...profile, relationId: rel.id }
+
+                    if (rel.status === 'accepted') {
+                        groups.friends.push(enriched)
+                    } else if (rel.status === 'pending') {
+                        if (iAmRequester) groups.pending.push(enriched)
+                        else groups.requests.push(enriched)
+                    } else if (rel.status === 'blocked') {
+                        groups.blocked.push(enriched)
+                    }
+                }))
+
+                setData(groups)
+            })
+            .catch(() => toast.error('Failed to load relations'))
+            .finally(() => setLoading(false))
+    }, [user])
+
+    const removeLocal = (id: string) =>
         setData(prev => ({ ...prev, [tab]: prev[tab].filter(u => u.id !== id) }))
 
-    const accept = (id: string) => {
-        const user = data.requests.find(u => u.id === id)
-        if (!user) return
-        setData(prev => ({
-            ...prev,
-            friends: [...prev.friends, { ...user, isOnline: false }],
-            requests: prev.requests.filter(u => u.id !== id),
-        }))
+    const handleAccept = async (userId: string) => {
+        try {
+            await acceptBuddyRequest(userId)
+            try {
+                await createRoom({ kind: 'dm', members: [userId] })
+            } catch (err) {
+                console.error('Failed to auto-create room', err)
+            }
+            const accepted = data.requests.find(u => u.id === userId)
+            if (accepted) {
+                setData(prev => ({
+                    ...prev,
+                    friends: [...prev.friends, accepted],
+                    requests: prev.requests.filter(u => u.id !== userId),
+                }))
+            }
+            toast.success('Buddy request accepted!')
+        } catch (err: any) {
+            toast.error(err.response?.data?.message ?? 'Failed to accept request')
+        }
+    }
+
+    const handleMessage = async (userId: string) => {
+        try {
+            const room = await createRoom({ kind: 'dm', members: [userId] })
+            router.push(`/chat?room=${room._id}`)
+        } catch (err: any) {
+            toast.error('Failed to start conversation')
+        }
+    }
+
+    const handleReject = async (userId: string) => {
+        try {
+            await rejectBuddyRequest(userId)
+            removeLocal(userId)
+            toast('Request declined', { icon: '🚫' })
+        } catch (err: any) {
+            toast.error(err.response?.data?.message ?? 'Failed to reject request')
+        }
+    }
+
+    const handleUnblock = async (userId: string) => {
+        try {
+            await unblockUser(userId)
+            removeLocal(userId)
+            toast.success('User unblocked')
+        } catch (err: any) {
+            toast.error(err.response?.data?.message ?? 'Failed to unblock')
+        }
     }
 
     const users = data[tab]
@@ -98,73 +175,84 @@ export default function BuddiesPage() {
                 </div>
 
                 {/* List */}
-                <div className='flex flex-col gap-2'>
-                    {users.length === 0 ? (
-                        <div className={`text-center py-16 text-[#444] ${anybody.className}`}>
-                            <p className='text-base'>Nothing here yet</p>
-                        </div>
-                    ) : users.map(user => (
-                        <div
-                            key={user.id}
-                            className='flex items-center gap-4 bg-[#1c1c1c] border-2 border-[#2a2a2a] p-4'
-                            style={{ clipPath: CLIP }}
-                        >
-                            {/* Avatar */}
-                            <div className='relative flex-shrink-0'>
-                                <div
-                                    className='w-11 h-11 rounded-full flex items-center justify-center text-white font-bold'
-                                    style={{ backgroundColor: avatarColor(user.username) }}
-                                >
-                                    {user.displayName[0].toUpperCase()}
+                {loading ? (
+                    <div className='flex justify-center py-20'>
+                        <Loader2 size={28} className='animate-spin text-[#ff4d00]' />
+                    </div>
+                ) : (
+                    <div className='flex flex-col gap-2'>
+                        {users.length === 0 ? (
+                            <div className={`text-center py-16 text-[#444] ${anybody.className}`}>
+                                <p className='text-base'>Nothing here yet</p>
+                            </div>
+                        ) : users.map(user => (
+                            <div
+                                key={user.id}
+                                className='flex items-center gap-4 bg-[#1c1c1c] border-2 border-[#2a2a2a] p-4'
+                                style={{ clipPath: CLIP }}
+                            >
+                                {/* Avatar */}
+                                <div className='relative flex-shrink-0'>
+                                    {user.avatar ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={user.avatar} alt={user.displayName} className='w-11 h-11 rounded-full object-cover' />
+                                    ) : (
+                                        <div
+                                            className='w-11 h-11 rounded-full flex items-center justify-center text-white font-bold'
+                                            style={{ backgroundColor: avatarColor(user.username) }}
+                                        >
+                                            {user.displayName[0].toUpperCase()}
+                                        </div>
+                                    )}
+                                    {tab === 'friends' && user.isOnline && (
+                                        <span className='absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-[#1c1c1c]' />
+                                    )}
                                 </div>
-                                {tab === 'friends' && user.isOnline && (
-                                    <span className='absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-[#1c1c1c]' />
-                                )}
-                            </div>
 
-                            {/* Info */}
-                            <div className='flex-1 min-w-0' onClick={() => router.push(`/profile/${user.id}`)} role='button'>
-                                <p className='text-white font-bold text-sm cursor-pointer hover:text-[#ff4d00] transition-colors'>{user.displayName}</p>
-                                <p className='text-[#555] text-xs'>@{user.username}</p>
-                                {user.bio && <p className={`text-[#666] text-xs mt-0.5 truncate ${anybody.className} font-light`}>{user.bio}</p>}
-                            </div>
+                                {/* Info */}
+                                <div className='flex-1 min-w-0' onClick={() => router.push(`/profile/${user.id}`)} role='button'>
+                                    <p className='text-white font-bold text-sm cursor-pointer hover:text-[#ff4d00] transition-colors'>{user.displayName}</p>
+                                    <p className='text-[#555] text-xs'>@{user.username}</p>
+                                    {user.bio && <p className={`text-[#666] text-xs mt-0.5 truncate ${anybody.className} font-light`}>{user.bio}</p>}
+                                </div>
 
-                            {/* Actions */}
-                            <div className='flex gap-2 flex-shrink-0'>
-                                {tab === 'friends' && (
-                                    <>
-                                        <button className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-[#ff4d00] transition-colors' style={{ clipPath: CLIP }}>
-                                            <MessageCircle size={14} />
+                                {/* Actions */}
+                                <div className='flex gap-2 flex-shrink-0'>
+                                    {tab === 'friends' && (
+                                        <>
+                                            <button onClick={() => handleMessage(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-[#ff4d00] transition-colors' style={{ clipPath: CLIP }}>
+                                                <MessageCircle size={14} />
+                                            </button>
+                                            <button onClick={() => handleReject(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-red-400 transition-colors' style={{ clipPath: CLIP }}>
+                                                <UserMinus size={14} />
+                                            </button>
+                                        </>
+                                    )}
+                                    {tab === 'pending' && (
+                                        <button onClick={() => handleReject(user.id)} className='h-8 px-3 flex items-center gap-1.5 bg-[#252525] text-[#888] hover:text-red-400 text-xs font-bold transition-colors' style={{ clipPath: CLIP }}>
+                                            <X size={12} /> Cancel
                                         </button>
-                                        <button onClick={() => remove(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-red-400 transition-colors' style={{ clipPath: CLIP }}>
-                                            <UserMinus size={14} />
+                                    )}
+                                    {tab === 'requests' && (
+                                        <>
+                                            <button onClick={() => handleAccept(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#ff4d00] text-white hover:bg-[#e04500] transition-colors' style={{ clipPath: CLIP }}>
+                                                <Check size={14} />
+                                            </button>
+                                            <button onClick={() => handleReject(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-red-400 transition-colors' style={{ clipPath: CLIP }}>
+                                                <X size={14} />
+                                            </button>
+                                        </>
+                                    )}
+                                    {tab === 'blocked' && (
+                                        <button onClick={() => handleUnblock(user.id)} className='h-8 px-3 flex items-center gap-1.5 bg-[#252525] text-[#888] hover:text-green-400 text-xs font-bold transition-colors' style={{ clipPath: CLIP }}>
+                                            Unblock
                                         </button>
-                                    </>
-                                )}
-                                {tab === 'pending' && (
-                                    <button onClick={() => remove(user.id)} className='h-8 px-3 flex items-center gap-1.5 bg-[#252525] text-[#888] hover:text-red-400 text-xs font-bold transition-colors' style={{ clipPath: CLIP }}>
-                                        <X size={12} /> Cancel
-                                    </button>
-                                )}
-                                {tab === 'requests' && (
-                                    <>
-                                        <button onClick={() => accept(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#ff4d00] text-white hover:bg-[#e04500] transition-colors' style={{ clipPath: CLIP }}>
-                                            <Check size={14} />
-                                        </button>
-                                        <button onClick={() => remove(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-red-400 transition-colors' style={{ clipPath: CLIP }}>
-                                            <X size={14} />
-                                        </button>
-                                    </>
-                                )}
-                                {tab === 'blocked' && (
-                                    <button onClick={() => remove(user.id)} className='h-8 px-3 flex items-center gap-1.5 bg-[#252525] text-[#888] hover:text-green-400 text-xs font-bold transition-colors' style={{ clipPath: CLIP }}>
-                                        Unblock
-                                    </button>
-                                )}
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    ))}
-                </div>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     )

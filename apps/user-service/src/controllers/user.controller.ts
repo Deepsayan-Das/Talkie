@@ -2,6 +2,19 @@ import { Request, Response } from "express";
 import { acceptBuddyReq, blockUser, getAllRelationsService, getUserProfile, rejectBuddyReq, searchUser, sendBuddyReq, unblockUser, updateUserProfile } from "../services/user.services";
 import logger from "../config/logger";
 
+/** Maps a raw DB profile row to the shape the frontend expects */
+const toPublicProfile = (user: any) => ({
+    id:          user.user_id,   // expose auth userId as the primary id
+    user_id:     user.user_id,
+    username:    user.username,
+    displayName: user.username,  // username IS the display name
+    bio:         user.bio ?? null,
+    avatar:      user.avatar_url ?? null,
+    avatar_url:  user.avatar_url ?? null,
+    isOnline:    false,          // will be updated by socket layer
+    last_seen:   user.last_seen ?? null,
+})
+
 export const sendBuddyReqController = async (req: Request, res: Response) => {
     const rawSenderId = req.headers["x-user-id"];
     let sender_id = Array.isArray(rawSenderId) ? rawSenderId[0] : rawSenderId;
@@ -19,6 +32,9 @@ export const sendBuddyReqController = async (req: Request, res: Response) => {
             message: "Friend request sent successfully!"
         });
     } catch (error: any) {
+        if (error.message === "you cannot send a friend request to yourself") {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         if (error.message === "user is blocked you cannot send a friend request") {
             return res.status(403).json({ success: false, message: error.message });
         }
@@ -177,7 +193,7 @@ export const getUserProfileController = async (req: Request, res: Response) => {
 
     try {
         const user = await getUserProfile(userId as string);
-        res.status(200).json({ success: true, data: user });
+        res.status(200).json({ success: true, data: toPublicProfile(user) });
     } catch (error: any) {
         if (error.message === "user not found!") {
             return res.status(404).json({ success: false, message: error.message });
@@ -203,8 +219,15 @@ export const updateUserProfileController = async (req: Request, res: Response) =
         return res.status(403).json({ success: false, message: "You can only update your own profile" });
     }
 
+    // Map camelCase frontend fields → snake_case DB columns
+    const { displayName, bio, avatar } = req.body;
+    const dbFields: Record<string, any> = {};
+    if (displayName !== undefined) dbFields['username'] = displayName;
+    if (bio !== undefined)         dbFields['bio'] = bio;
+    if (avatar !== undefined)      dbFields['avatar_url'] = avatar;
+
     try {
-        await updateUserProfile(userId, req.body);
+        await updateUserProfile(userId, dbFields);
         res.status(200).json({ success: true, message: "Profile updated successfully!" });
     } catch (error: any) {
         if (error.message === "user not found!") {
@@ -232,7 +255,7 @@ export const searchUserController = async (req: Request, res: Response) => {
             logger.info('searchUser — no user found', { query });
             return res.status(404).json({ success: false, message: "No user found" });
         }
-        res.status(200).json({ success: true, data: user });
+        res.status(200).json({ success: true, data: toPublicProfile(user) });
     } catch (error: any) {
         logger.error('searchUser — unexpected error', { query, error: error.message });
         res.status(500).json({ success: false, message: "Internal server error" });

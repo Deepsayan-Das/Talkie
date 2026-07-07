@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
+import mongoose from 'mongoose';
 import { initSocketHandler } from './socket/socket.handler';
 import { env } from './config/env';
 import chatRouter from './routes/chat.routes';
@@ -16,6 +17,28 @@ app.get('/metrics', async (req, res) => {
 
 const httpServer = createServer(app);
 initSocketHandler(httpServer);
-httpServer.listen(env.port, () => {
-    logger.info(`Chat service is running on port ${env.port}`);
-})
+
+const MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 3000;
+
+const startup = async () => {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            await mongoose.connect(env.mongoUri);
+            logger.info('Connected to MongoDB');
+            httpServer.listen(env.port, () => {
+                logger.info(`Chat service is running on port ${env.port}`);
+            });
+            return;
+        } catch (err: any) {
+            logger.warn(`MongoDB connection attempt ${attempt}/${MAX_RETRIES} failed`, { error: err.message });
+            if (attempt === MAX_RETRIES) {
+                logger.error('All MongoDB connection attempts exhausted, shutting down');
+                process.exit(1);
+            }
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        }
+    }
+};
+
+startup();

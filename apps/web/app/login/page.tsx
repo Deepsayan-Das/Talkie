@@ -3,7 +3,10 @@ import React, { useState } from 'react'
 import { JetBrains_Mono, Anybody } from 'next/font/google'
 import { useForm } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
-import toast, { Toaster } from 'react-hot-toast'
+import toast from 'react-hot-toast'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/context/AuthContext'
+import { resendVerification } from '@/lib/auth'
 
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
 const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
@@ -29,7 +32,8 @@ const EyeIcon = ({ open }: { open: boolean }) =>
 // ---------- Reusable password input with show/hide toggle ----------
 type PasswordFieldProps = {
     placeholder: string
-    register: any
+    // UseFormRegisterReturn from react-hook-form spread onto <input>
+    register: ReturnType<import('react-hook-form').UseFormRegister<Record<string, string>>>
     error?: string
 }
 const PasswordField: React.FC<PasswordFieldProps> = ({ placeholder, register, error }) => {
@@ -62,17 +66,26 @@ const PasswordField: React.FC<PasswordFieldProps> = ({ placeholder, register, er
 type LoginValues = { email: string; password: string }
 
 const LoginForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
+    const router = useRouter()
+    const { login } = useAuth()
     const {
         register,
         handleSubmit,
-        formState: { errors },
+        formState: { errors, isSubmitting },
         reset,
     } = useForm<LoginValues>({ mode: 'onTouched' })
 
-    const onSubmit = (data: LoginValues) => {
-        // No backend connected yet — simulate success
-        toast.success('Logged in successfully!')
-        reset()
+    const onSubmit = async (data: LoginValues) => {
+        try {
+            const user = await login(data.email, data.password)
+            toast.success('Welcome back!')
+            reset()
+            router.push('/chat')
+        } catch (err: any) {
+            const msg = err.response?.data?.message ?? 'Login failed'
+            if (msg === 'INVALID CREDENTIALS') toast.error('Wrong email or password.')
+            else toast.error(msg)
+        }
     }
 
     return (
@@ -112,9 +125,10 @@ const LoginForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
             <motion.button
                 whileTap={{ scale: 0.97 }}
                 type="submit"
-                className={`w-[90%] h-15 bg-[#ff4d00] text-3xl ${clipPath}`}
+                disabled={isSubmitting}
+                className={`w-[90%] h-15 bg-[#ff4d00] text-3xl ${clipPath} disabled:opacity-60`}
             >
-                LOGIN
+                {isSubmitting ? '...' : 'LOGIN'}
             </motion.button>
 
             <span className={`font-light ${anybody.className} self-end mr-[10%]`}>
@@ -131,20 +145,39 @@ const LoginForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
 type SignupValues = { email: string; password: string; confirmPassword: string }
 
 const SignupForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
+    const router = useRouter()
+    const { register: registerUser } = useAuth()
     const {
         register,
         handleSubmit,
         watch,
-        formState: { errors },
+        formState: { errors, isSubmitting },
         reset,
     } = useForm<SignupValues>({ mode: 'onTouched' })
 
     const password = watch('password')
+    const [unverifiedToken, setUnverifiedToken] = useState<string | null>(null)
 
-    const onSubmit = (data: SignupValues) => {
-        // No backend connected yet — simulate success
-        toast.success('Account created successfully!')
-        reset()
+    const onSubmit = async (data: SignupValues) => {
+        try {
+            const user = await registerUser(data.email, data.password)
+            toast('Account created! Check your inbox for the verification email.', { icon: '📧', duration: 6000 })
+            reset()
+            router.push('/onboarding')
+        } catch (err: any) {
+            const msg = err.response?.data?.message ?? 'Registration failed'
+            if (msg === 'User already exists') toast.error('That email is already registered.')
+            else toast.error(msg)
+        }
+    }
+
+    const handleResend = async () => {
+        try {
+            await resendVerification()
+            toast.success('Verification email resent!')
+        } catch (err: any) {
+            toast.error(err.response?.data?.message ?? 'Could not resend email')
+        }
     }
 
     return (
@@ -193,9 +226,10 @@ const SignupForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
             <motion.button
                 whileTap={{ scale: 0.97 }}
                 type="submit"
-                className={`w-[90%] h-15 bg-[#ff4d00] text-3xl ${clipPath}`}
+                disabled={isSubmitting}
+                className={`w-[90%] h-15 bg-[#ff4d00] text-3xl ${clipPath} disabled:opacity-60`}
             >
-                SIGNUP
+                {isSubmitting ? '...' : 'SIGNUP'}
             </motion.button>
 
             <span className={`font-light ${anybody.className} self-end mr-[10%]`}>
@@ -214,19 +248,6 @@ const Page: React.FC = () => {
 
     return (
         <div className={`h-screen w-full relative flex items-center justify-center bg-[#1c1c1c] ${jetbrains.className} font-extrabold`}>
-            <Toaster
-                position="top-center"
-                toastOptions={{
-                    style: {
-                        background: '#252525',
-                        color: '#fff',
-                        border: '1px solid #ff4d00',
-                        fontFamily: 'inherit',
-                    },
-                    success: { iconTheme: { primary: '#ff4d00', secondary: '#252525' } },
-                }}
-            />
-
             <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}

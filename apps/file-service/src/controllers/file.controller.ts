@@ -18,9 +18,10 @@ export const uploadFileController = [
 
         try {
             const file = await uploadFileService(ownerId, req.file);
-            return res.status(201).json({ success: true, data: file });
+            // Return just the url the frontend needs — full record is unnecessary over the wire
+            return res.status(201).json({ success: true, data: { url: file.url, id: file.id } });
         } catch (error: any) {
-            return res.status(500).json({ success: false, message: 'Internal server error' });
+            return res.status(500).json({ success: false, message: error.message ?? 'Internal server error' });
         }
     }
 ];

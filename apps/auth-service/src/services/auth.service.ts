@@ -15,7 +15,7 @@ export const sendVerificationMail = async (user: any, email: string) => {
     expiresAt.setDate(expiresAt.getDate() + 1);
     await createVerificationToken(user.id, verificationTokenHash, expiresAt);
 
-    const verificationUrl = `${env.client_url}/verify?token=${verificationToken}`;
+    const verificationUrl = `${env.client_url}/verify-email?token=${verificationToken}`;
 
     logger.info('Publishing verification email event', { email });
     await redis.publish('auth.user.registered', JSON.stringify({
@@ -43,8 +43,15 @@ export const registerUser = async (email: string, password: string) => {
         env.jwt_secret,
         { expiresIn: env.jwt_expires_in as any }
     );
+    
+    const refreshToken = crypto.randomBytes(32).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+    await createRefreshToken(user.id, refreshTokenHash, expiresAt);
+    
     const { password_hash, ...safeUser } = user;
-    return { ...safeUser, accessToken };
+    return { ...safeUser, accessToken, refreshToken, role: 'UNVERIFIED' };
 
 }
 
@@ -70,26 +77,18 @@ export const loginUser = async (email: string, password: string) => {
         { expiresIn: env.jwt_expires_in as any }
     )
 
-
-
-    if (roles.includes('UNVERIFIED')) {
-        logger.info('Unverified user login — issuing access-only token', { userId: user.id });
-        return { accessToken, role: 'UNVERIFIED' };
-    }
-    if (roles.includes('VERIFIED') || roles.includes('USER')) {
-        const refreshToken = crypto.randomBytes(32).toString('hex');
-        const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 7);
-        await createRefreshToken(user.id, refreshTokenHash, expiresAt);
-        logger.info('Verified user login — issuing access + refresh tokens', { userId: user.id });
-        return { accessToken, refreshToken, role: 'VERIFIED' };
-
-
-    }
-    return null;
-
-
+    const refreshToken = crypto.randomBytes(32).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+    // Delete any existing refresh tokens for this user before inserting a new one
+    await deleteRefreshToken(user.id);
+    await createRefreshToken(user.id, refreshTokenHash, expiresAt);
+    
+    const role = roles.includes('USER') || roles.includes('VERIFIED') ? 'VERIFIED' : 'UNVERIFIED';
+    logger.info(`User login — issuing access + refresh tokens for role ${role}`, { userId: user.id });
+    
+    return { accessToken, refreshToken, role };
 }
 
 export const verifyUser = async (token: string) => {
@@ -165,10 +164,6 @@ export const rotateTokens = async (rawRefreshToken: string) => {
     }
     const userId = oldToken.user_id
     const roles = await getRolesByUserId(userId);
-    if (roles.includes('UNVERIFIED')) {
-        logger.warn('Token rotation blocked — user not verified', { userId });
-        throw new Error("USER NOT VERIFIED");
-    }
     if (new Date(oldToken.expires_at).getTime() < Date.now()) {
         logger.warn('Token rotation failed — refresh token expired', { userId });
         throw new Error("Refresh Token Expired");
@@ -179,7 +174,7 @@ export const rotateTokens = async (rawRefreshToken: string) => {
     expiresAt.setDate(expiresAt.getDate() + 7);
     await rotateRefreshToken(userId, refreshTokenHash, expiresAt);
     const accessToken = jwt.sign(
-        { userId: userId, role: 'USER' },
+        { userId: userId, role: roles.includes('USER') ? 'USER' : 'UNVERIFIED' },
         env.jwt_secret,
         { expiresIn: env.jwt_expires_in as any }
     )

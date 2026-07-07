@@ -1,4 +1,4 @@
-import { createMetrics } from "shared-utils";
+﻿import { createMetrics } from "@talkie/shared-utils";
 
 
 export const metrics = createMetrics('api-gateway');

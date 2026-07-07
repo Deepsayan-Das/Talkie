@@ -18,19 +18,28 @@ app.get('/metrics', async (req, res) => {
 });
 
 const startup = async () => {
-    try {
-        await db.raw('SELECT 1')
-        logger.info('Database connection established');
-        app.listen(env.port, () => {
-            logger.info(`Auth service is running on port ${env.port}`);
-        })
-    } catch (err) {
-        logger.error('Database connection failed', { error: (err as Error).message });
-        process.exit(1);
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY_MS = 5000;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            await db.raw('SELECT 1');
+            logger.info('Database connection established');
+            app.listen(env.port, () => {
+                logger.info(`Auth service is running on port ${env.port}`);
+            });
+            return; // success — exit the retry loop
+        } catch (err) {
+            logger.warn(`Database connection attempt ${attempt}/${MAX_RETRIES} failed`, {
+                error: (err as Error).message
+            });
+            if (attempt === MAX_RETRIES) {
+                logger.error('All database connection attempts exhausted, shutting down');
+                process.exit(1);
+            }
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        }
     }
-
-
-
-}
+};
 
 startup();

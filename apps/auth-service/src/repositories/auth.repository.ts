@@ -27,14 +27,14 @@ export const assignRole = async (userId: string, role: string) => {
 }
 
 export const getRolesByUserId = async (userId: string) => {
-    const [user] = await db('user_roles').where({ user_id: userId }).pluck('role')
-    return user;
+    const roles = await db('user_roles').where({ user_id: userId }).pluck('role')
+    return roles;
 }
 
 export const createRefreshToken = async (userId: string, token: string, expiresAt: Date) => {
     return await db('refresh_tokens').insert({
         user_id: userId,
-        token: token,
+        token_hash: token,
         expires_at: expiresAt
     })
 }
@@ -68,7 +68,7 @@ export const findLatestVerificationToken = async (userId: string) => {
 
 export const rotateRefreshToken = async (userId: string, newRefreshToken: string, newExpiresAt: Date) => {
     const [token] = await db('refresh_tokens').where({ user_id: userId }).update({
-        token: newRefreshToken,
+        token_hash: newRefreshToken,
         expires_at: newExpiresAt
     }).returning('*');
     return token;
@@ -81,5 +81,5 @@ export const deleteRefreshToken = async (userId: string) => {
 }
 
 export const findRefreshToken = async (tokenHash: string) => {
-    return await db('refresh_tokens').where({ token: tokenHash }).first();
+    return await db('refresh_tokens').where({ token_hash: tokenHash }).first();
 }

@@ -21,7 +21,7 @@
     "knex": "^3.2.10",
     "nodemailer": "^9.0.1",
     "pg": "^8.21.0",
-    "shared-utils": "*"
+    "@talkie/shared-utils": "*"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

@@ -1,49 +1,64 @@
 import env from "./env";
-interface RouteConfig {
-    prefix: string;        // e.g. "/auth"
-    target: string;        // e.g. env.auth_service_url
-    protected: boolean;    // run jwtVerifyMiddleware before proxying?
+
+/**
+ * ServiceConfig defines one downstream microservice.
+ *
+ * IMPORTANT — how pathRewrite works with app.use():
+ *   When Express mounts at `app.use('/auth', proxy)`, it strips '/auth'
+ *   before passing the URL to the proxy.  So the proxy sees req.url = '/register',
+ *   NOT '/auth/register'.  pathRewrite must match THAT stripped path.
+ *
+ *   Example:  mountPrefix = '/auth'
+ *             incoming:     POST /auth/register
+ *             proxy sees:   POST /register         (after Express strips '/auth')
+ *             pathRewrite:  { '^/': '/api/v1/auth/' }
+ *             final URL:    http://localhost:3001/api/v1/auth/register  ✅
+ */
+interface ServiceConfig {
+    mountPrefix: string;                  // What Express mounts on  e.g. '/auth'
+    target: string;                       // Bare host               e.g. 'http://localhost:3001'
+    pathRewrite: Record<string, string>;  // Regex → replacement on stripped path
+    publicPaths?: string[];               // Sub-paths that skip JWT e.g. ['/register', '/login']
 }
 
-export const routes: RouteConfig[] = [
+export const services: ServiceConfig[] = [
+    // ── Auth service ───────────────────────────────────────────────────────
+    // app.use('/auth') → proxy sees '/register', rewrites to '/api/v1/auth/register'
     {
-        prefix: '/auth/register',
+        mountPrefix: '/auth',
         target: env.auth_service_url,
-        protected: false
+        pathRewrite: { '^/': '/api/v1/auth/' },
+        publicPaths: ['/register', '/login', '/verify', '/resend-verification', '/rotate-tokens']
     },
+    // ── User service ───────────────────────────────────────────────────────
+    // app.use('/user') → proxy sees '/search', rewrites to '/api/v1/user/search'
     {
-        prefix: '/auth/login',
-        target: env.auth_service_url,
-        protected: false
-    },
-    {
-        prefix: '/auth/verify/:token',
-        target: env.auth_service_url,
-        protected: false
-    },
-    {
-        prefix: '/auth',
-        target: env.auth_service_url,
-        protected: true
-    },
-    {
-        prefix: '/user',
+        mountPrefix: '/user',
         target: env.user_service_url,
-        protected: true
+        pathRewrite: { '^/': '/api/v1/user/' },
+        publicPaths: []
     },
+    // ── Chat service ───────────────────────────────────────────────────────
+    // chat-service mounts at '/chat' internally
     {
-        prefix: '/chat',
+        mountPrefix: '/chat',
         target: env.chat_service_url,
-        protected: true
+        pathRewrite: { '^/': '/chat/' },
+        publicPaths: []
     },
+    // ── File service ───────────────────────────────────────────────────────
+    // file-service mounts at '/files' internally
     {
-        prefix: '/file',
+        mountPrefix: '/file',
         target: env.file_service_url,
-        protected: true
+        pathRewrite: { '^/': '/files/' },
+        publicPaths: []
     },
+    // ── Notification service ───────────────────────────────────────────────
     {
-        prefix: '/notification',
+        mountPrefix: '/notification',
         target: env.notification_service_url,
-        protected: true
+        pathRewrite: { '^/': '/notification/' },
+        publicPaths: []
     }
-]
+];
