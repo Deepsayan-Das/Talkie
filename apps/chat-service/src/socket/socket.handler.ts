@@ -17,7 +17,7 @@ export const initSocketHandler = (httpServer: HttpServer) => {
                 return next(new Error("Unauthorized"));
             }
             const payload = jwt.verify(token, process.env.JWT_SECRET!);
-            socket.data.userId = (payload as JwtPayload).id;
+            socket.data.userId = (payload as JwtPayload).userId || (payload as JwtPayload).id;
             next();
         } catch {
             logger.warn('Socket connection rejected — invalid or expired token', { socketId: socket.id });

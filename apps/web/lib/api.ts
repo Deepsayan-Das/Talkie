@@ -49,8 +49,12 @@ api.interceptors.response.use(
                 queue = []
                 original.headers['Authorization'] = `Bearer ${newToken}`
                 return api(original)
-            } catch {
-                localStorage.removeItem('accessToken')
+            } catch (err: any) {
+                const status = err?.response?.status;
+                if (status >= 400 && status < 500) {
+                    localStorage.removeItem('accessToken')
+                    sessionStorage.removeItem('accessToken')
+                }
                 queue = []
                 // Let the caller handle the error (AuthContext will redirect to /login)
                 return Promise.reject(err)

@@ -48,8 +48,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const refreshTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     // Helper to store token in the right place
-    const setStoredToken = useCallback((token: string, role: string) => {
-        if (role === 'UNVERIFIED') {
+    const setStoredToken = useCallback((token: string, role: string | string[]) => {
+        const isUnverified = Array.isArray(role) ? role.includes('UNVERIFIED') : role === 'UNVERIFIED'
+        if (isUnverified) {
             sessionStorage.setItem('accessToken', token)
             localStorage.removeItem('accessToken')
         } else {
@@ -84,12 +85,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 } else {
                     throw new Error('Failed to decode token')
                 }
-            } catch {
-                // Refresh failed — user needs to log in again
-                setUser(null)
-                setAccessToken(null)
-                clearStoredToken()
-                router.push('/login')
+            } catch (err: any) {
+                const status = err?.response?.status;
+                if (status >= 400 && status < 500) {
+                    // Refresh failed — user needs to log in again
+                    setUser(null)
+                    setAccessToken(null)
+                    clearStoredToken()
+                    router.push('/login')
+                }
             }
         }, 14 * 60 * 1000)
     }, [router, setStoredToken, clearStoredToken])
@@ -114,10 +118,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         scheduleRefresh()
                     }
                 })
-                .catch(() => {
-                    clearStoredToken()
-                    setAccessToken(null)
-                    setUser(null)
+                .catch((err: any) => {
+                    const status = err?.response?.status;
+                    if (status >= 400 && status < 500) {
+                        clearStoredToken()
+                        setAccessToken(null)
+                        setUser(null)
+                    }
                 })
                 .finally(() => setIsLoading(false))
         } else {
@@ -129,20 +136,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const login = useCallback(async (email: string, password: string): Promise<AuthUser> => {
         const authUser = await apiLogin(email, password)
+        const decodedUser = decodeUser(authUser.accessToken)
+        if (!decodedUser) throw new Error('Invalid token received on login')
         setStoredToken(authUser.accessToken, authUser.role)
         setAccessToken(authUser.accessToken)
-        setUser(authUser)
+        setUser(decodedUser)
         scheduleRefresh()
-        return authUser
+        return decodedUser
     }, [scheduleRefresh, setStoredToken])
 
     const register = useCallback(async (email: string, password: string): Promise<AuthUser> => {
         const authUser = await apiRegister(email, password)
+        const decodedUser = decodeUser(authUser.accessToken)
+        if (!decodedUser) throw new Error('Invalid token received on register')
         setStoredToken(authUser.accessToken, authUser.role)
         setAccessToken(authUser.accessToken)
-        setUser(authUser)
+        setUser(decodedUser)
         scheduleRefresh()
-        return authUser
+        return decodedUser
     }, [scheduleRefresh, setStoredToken])
 
     const logout = useCallback(async () => {

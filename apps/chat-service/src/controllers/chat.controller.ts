@@ -14,8 +14,8 @@ const resolveStatus = (message: string): number => {
 export const createRoomController = async (req: Request, res: Response) => {
     try {
         const userId = req.headers["x-user-id"] as string;
-        const { members } = req.body;
-        const room = await ChatService.createRoom(userId, members);
+        const { members, kind, name } = req.body;
+        const room = await ChatService.createRoom(userId, members, kind, name);
         return res.status(201).json({ success: true, data: room });
     } catch (error: any) {
         return res.status(resolveStatus(error.message)).json({ success: false, message: error.message });

@@ -1,15 +1,18 @@
 'use client'
 
-import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2 } from 'lucide-react'
+import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile } from 'lucide-react'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
+import { JetBrains_Mono, Anybody } from 'next/font/google'
 import toast from 'react-hot-toast'
+import EmojiPicker, { Theme, EmojiClickData } from 'emoji-picker-react'
 import { useAuth } from '@/context/AuthContext'
 import { resendVerification } from '@/lib/auth'
 import { useSocket } from '@/context/SocketContext'
-import { getUserProfile } from '@/lib/user'
-import { getRooms, getMessages, createRoom } from '@/lib/chat'
+import { getUserProfile, getAllRelations } from '@/lib/user'
+import { getRooms, getMessages, createRoom, updateGroupInfo, removeMember, promoteMember, demoteMember } from '@/lib/chat'
 import { joinRoom, leaveRoom, sendMessage as socketSend, emitTyping, emitStopTyping, markAsSeen } from '@/lib/socket'
 import type { Room, ChatMessage } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
@@ -19,6 +22,9 @@ const CLIP_SENT     = 'polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0
 const CLIP_RECEIVED = 'polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px)'
 const CLIP_INPUT    = 'polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%)'
 const CLIP_BTN      = 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)'
+
+const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
+const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(d: Date): string {
@@ -47,6 +53,9 @@ function groupByDate(messages: ChatMessage[]): { date: string; msgs: ChatMessage
 
 // Last message preview from a room
 function lastMessage(room: Room): string {
+    if (room.lastMessageRecord) {
+        return room.lastMessageRecord.content;
+    }
     return room.name ?? `${room.members.length} members`
 }
 
@@ -143,6 +152,258 @@ const RoomItem = ({
     )
 }
 
+// ─── Create Group Modal ───────────────────────────────────────────────────────
+const CreateGroupModal = ({
+    onClose,
+    onCreate
+}: {
+    onClose: () => void,
+    onCreate: (name: string, members: string[]) => void
+}) => {
+    const [name, setName] = useState('')
+    const [buddies, setBuddies] = useState<{ id: string, name: string }[]>([])
+    const [selected, setSelected] = useState<Set<string>>(new Set())
+    const [loading, setLoading] = useState(true)
+    const { user } = useAuth()
+
+    useEffect(() => {
+        getAllRelations().then(async relations => {
+            const accepted = relations.filter(r => r.status === 'accepted')
+            const buddyIds = accepted.map(r => r.requester_id === user?.id ? r.receiver_id : r.requester_id)
+            const profs = await Promise.all(buddyIds.map(id => getUserProfile(id).catch(() => null)))
+            setBuddies(profs.filter(Boolean).map(p => ({ id: p!.id, name: p!.displayName })))
+            setLoading(false)
+        }).catch(() => {
+            toast.error("Failed to load buddies")
+            setLoading(false)
+        })
+    }, [user?.id])
+
+    const toggleBuddy = (id: string) => {
+        const next = new Set(selected)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        setSelected(next)
+    }
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!name.trim()) return toast.error("Group name is required")
+        if (selected.size === 0) return toast.error("Select at least one member")
+        onCreate(name.trim(), Array.from(selected))
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className={`w-full max-w-md bg-[#252525] flex flex-col p-8 gap-6 shadow-2xl ${jetbrains.className}`}
+            >
+                <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-black text-white">NEW GROUP</h2>
+                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors">✕</button>
+                </div>
+
+                <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+                    <div className="flex flex-col">
+                        <label className={`text-sm text-[#aaa] mb-1 font-light ${anybody.className}`}>
+                            Group Name <span className="text-[#ff4d00]">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={e => setName(e.target.value)}
+                            placeholder="e.g. The Squad"
+                            className={`w-full h-12 bg-[#353535] outline-none border-b-4 border-b-[#525252] focus:border-b-[#ff4d00] transition-colors px-4 text-white font-bold ${anybody.className}`}
+                        />
+                    </div>
+
+                    <div className="flex flex-col">
+                        <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
+                            Select Members ({selected.size}) <span className="text-[#ff4d00]">*</span>
+                        </label>
+                        <div className="max-h-48 overflow-y-auto flex flex-col gap-2 bg-[#1c1c1c] p-2 border-2 border-[#353535]">
+                            {loading ? (
+                                <div className="flex justify-center py-4"><Loader2 className="animate-spin text-[#ff4d00]" /></div>
+                            ) : buddies.length === 0 ? (
+                                <p className={`text-center text-[#555] text-sm py-4 ${anybody.className}`}>No buddies available</p>
+                            ) : (
+                                buddies.map(b => (
+                                    <div
+                                        key={b.id}
+                                        onClick={() => toggleBuddy(b.id)}
+                                        className={`p-3 flex items-center justify-between cursor-pointer border-2 transition-colors ${
+                                            selected.has(b.id) ? 'bg-[#ff4d00]/20 border-[#ff4d00]' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]/50'
+                                        }`}
+                                    >
+                                        <span className={`text-sm text-white font-bold ${anybody.className}`}>{b.name}</span>
+                                        {selected.has(b.id) && <Check size={16} className="text-[#ff4d00]" />}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
+                    <motion.button
+                        whileTap={{ scale: 0.97 }}
+                        type="submit"
+                        className={`w-full h-12 bg-[#ff4d00] text-xl font-extrabold text-white mt-2 [clip-path:polygon(16px_0%,100%_0%,100%_calc(100%-16px),calc(100%-16px)_100%,0%_100%,0%_16px)]`}
+                    >
+                        CREATE GROUP
+                    </motion.button>
+                </form>
+            </motion.div>
+        </div>
+    )
+}
+
+// ─── Group Info Modal ────────────────────────────────────────────────────────
+const GroupInfoModal = ({
+    room,
+    onClose,
+    profiles,
+    currentUserId,
+    onRoomUpdated,
+    onLeave
+}: {
+    room: Room,
+    onClose: () => void,
+    profiles: Record<string, UserProfile>,
+    currentUserId: string,
+    onRoomUpdated: (room: Room) => void,
+    onLeave: () => void
+}) => {
+    const [name, setName] = useState(room.name || '')
+    const [isEditing, setIsEditing] = useState(false)
+    const [loading, setLoading] = useState(false)
+    const myRole = room.members.find(m => m.userId === currentUserId)?.role || 'member'
+    const isAdmin = myRole === 'admin' || myRole === 'owner'
+
+    const handleUpdate = async () => {
+        if (!name.trim()) return toast.error("Name required")
+        setLoading(true)
+        try {
+            const updated = await updateGroupInfo(room._id, { name: name.trim() })
+            onRoomUpdated(updated)
+            setIsEditing(false)
+            toast.success("Group updated")
+        } catch {
+            toast.error("Failed to update group")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleAction = async (action: 'promote' | 'demote' | 'remove', memberId: string) => {
+        try {
+            let updated: Room;
+            if (action === 'promote') updated = await promoteMember(room._id, memberId)
+            else if (action === 'demote') updated = await demoteMember(room._id, memberId)
+            else updated = await removeMember(room._id, memberId)
+            onRoomUpdated(updated)
+            toast.success(`Member ${action}d`)
+        } catch {
+            toast.error(`Failed to ${action} member`)
+        }
+    }
+
+    const handleLeave = async () => {
+        if (!window.confirm("Are you sure you want to leave this group?")) return
+        try {
+            await removeMember(room._id, currentUserId)
+            onLeave()
+            toast.success("You left the group")
+        } catch {
+            toast.error("Failed to leave group")
+        }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className={`w-full max-w-md bg-[#252525] flex flex-col p-8 gap-6 shadow-2xl ${jetbrains.className} max-h-[80vh] overflow-y-auto`}
+            >
+                <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-black text-white">GROUP INFO</h2>
+                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors">✕</button>
+                </div>
+
+                {isEditing ? (
+                    <div className="flex flex-col gap-2">
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={e => setName(e.target.value)}
+                            className={`w-full h-10 bg-[#353535] outline-none border-b-2 border-b-[#ff4d00] px-4 text-white font-bold ${anybody.className}`}
+                        />
+                        <div className="flex gap-2">
+                            <button onClick={handleUpdate} disabled={loading} className="flex-1 bg-[#ff4d00] text-white py-1 text-sm font-bold">Save</button>
+                            <button onClick={() => setIsEditing(false)} className="flex-1 bg-[#353535] text-white py-1 text-sm font-bold">Cancel</button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-between">
+                        <span className={`text-xl text-white font-bold ${anybody.className}`}>{room.name || 'Group Chat'}</span>
+                        {isAdmin && (
+                            <button onClick={() => setIsEditing(true)} className="text-[#ff4d00] hover:text-white text-sm underline">Edit</button>
+                        )}
+                    </div>
+                )}
+
+                <div className="flex flex-col gap-2 mt-2">
+                    <label className={`text-sm text-[#aaa] font-light ${anybody.className}`}>Members ({room.members.length})</label>
+                    <div className="flex flex-col gap-2">
+                        {room.members.map(m => {
+                            const isMe = m.userId === currentUserId
+                            const prof = profiles[m.userId]
+                            return (
+                                <div key={m.userId} className="flex items-center justify-between bg-[#1c1c1c] p-3 border-2 border-[#353535]">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-xs font-bold">
+                                            {prof?.avatar ? <img src={prof.avatar} alt="avatar" className="w-full h-full rounded-full object-cover" /> : (prof?.displayName?.[0]?.toUpperCase() || '?')}
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className={`text-sm text-white font-bold ${anybody.className}`}>{prof?.displayName || 'Unknown'} {isMe && '(You)'}</span>
+                                            <span className="text-[10px] text-[#888] uppercase">{m.role}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    {!isMe && isAdmin && m.role !== 'owner' && (
+                                        <div className="flex gap-2">
+                                            {m.role === 'member' && myRole === 'owner' && (
+                                                <button onClick={() => handleAction('promote', m.userId)} className="text-[10px] text-green-500 hover:underline">Promote</button>
+                                            )}
+                                            {m.role === 'admin' && myRole === 'owner' && (
+                                                <button onClick={() => handleAction('demote', m.userId)} className="text-[10px] text-orange-500 hover:underline">Demote</button>
+                                            )}
+                                            {((myRole === 'owner') || (myRole === 'admin' && m.role === 'member')) && (
+                                                <button onClick={() => handleAction('remove', m.userId)} className="text-[10px] text-red-500 hover:underline">Remove</button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                <motion.button
+                    whileTap={{ scale: 0.97 }}
+                    onClick={handleLeave}
+                    className={`w-full h-10 bg-red-600/20 text-red-500 text-sm font-extrabold mt-4 border-2 border-red-500 hover:bg-red-500 hover:text-white transition-colors`}
+                >
+                    LEAVE GROUP
+                </motion.button>
+            </motion.div>
+        </div>
+    )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 const ChatInner = () => {
     const pathname = usePathname()
@@ -155,9 +416,12 @@ const ChatInner = () => {
     const [activeRoom, setActiveRoom] = useState<Room | null>(null)
     const [messages, setMessages] = useState<ChatMessage[]>([])
     const [input, setInput] = useState('')
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false)
     const [isTyping, setIsTyping] = useState(false)     // remote peer typing
     const [roomsLoading, setRoomsLoading] = useState(true)
     const [msgsLoading, setMsgsLoading] = useState(false)
+    const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false)
+    const [showGroupInfo, setShowGroupInfo] = useState(false)
     const [profiles, setProfiles] = useState<Record<string, UserProfile>>({})
     const [page, setPage] = useState(1)
     const [hasMore, setHasMore] = useState(true)
@@ -166,6 +430,22 @@ const ChatInner = () => {
     const textareaRef  = useRef<HTMLTextAreaElement>(null)
     const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
     const prevRoomId   = useRef<string | null>(null)
+    const emojiPickerRef = useRef<HTMLDivElement>(null)
+
+    // ── Click outside emoji picker ────────────────────────────────────────────
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+                setShowEmojiPicker(false)
+            }
+        }
+        if (showEmojiPicker) {
+            document.addEventListener('mousedown', handleClickOutside)
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside)
+        }
+    }, [showEmojiPicker])
 
     // ── Load rooms on mount ───────────────────────────────────────────────────
     useEffect(() => {
@@ -224,7 +504,7 @@ const ChatInner = () => {
 
         getMessages(roomId, 1, 50)
             .then(data => {
-                setMessages(data)
+                setMessages(data.reverse())
                 setHasMore(data.length === 50)
             })
             .catch(() => toast.error('Could not load messages'))
@@ -250,17 +530,17 @@ const ChatInner = () => {
             }
             // Bubble room to top of list
             setRooms(prev => {
-                const updated = prev.map(r => r._id === msg.roomId ? { ...r, updatedAt: msg.createdAt } : r)
+                const updated = prev.map(r => r._id === msg.roomId ? { ...r, updatedAt: msg.createdAt, lastMessageRecord: msg } : r)
                 return [...updated].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
             })
         }
 
-        const onTyping = ({ roomId, userId }: { roomId: string; userId: string }) => {
-            if (roomId === activeRoom?._id && userId !== user?.id) setIsTyping(true)
+        const onTyping = ({ userId }: { userId: string }) => {
+            if (userId !== user?.id) setIsTyping(true)
         }
 
-        const onStopTyping = ({ roomId, userId }: { roomId: string; userId: string }) => {
-            if (roomId === activeRoom?._id && userId !== user?.id) setIsTyping(false)
+        const onStopTyping = ({ userId }: { userId: string }) => {
+            if (userId !== user?.id) setIsTyping(false)
         }
 
         const onMessageEdited = (updated: ChatMessage) => {
@@ -271,21 +551,26 @@ const ChatInner = () => {
             setMessages(prev => prev.map(m => m._id === messageId ? { ...m, isDeleted: true, content: '' } : m))
         }
 
-        const onSeen = (updated: ChatMessage) => {
-            setMessages(prev => prev.map(m => m._id === updated._id ? updated : m))
+        const onSeen = (data: { messageId: string, userId: string, seenAt: string }) => {
+            setMessages(prev => prev.map(m => {
+                if (m._id === data.messageId) {
+                    return { ...m, seenBy: [...m.seenBy.filter(s => s.userId !== data.userId), { userId: data.userId, seenAt: data.seenAt }] }
+                }
+                return m
+            }))
         }
 
         socket.on('newMessage', onMessage)
-        socket.on('typing', onTyping)
-        socket.on('stopTyping', onStopTyping)
+        socket.on('userTyping', onTyping)
+        socket.on('userStoppedTyping', onStopTyping)
         socket.on('messageEdited', onMessageEdited)
         socket.on('messageDeleted', onMessageDeleted)
         socket.on('messageSeen', onSeen)
 
         return () => {
             socket.off('newMessage', onMessage)
-            socket.off('typing', onTyping)
-            socket.off('stopTyping', onStopTyping)
+            socket.off('userTyping', onTyping)
+            socket.off('userStoppedTyping', onStopTyping)
             socket.off('messageEdited', onMessageEdited)
             socket.off('messageDeleted', onMessageDeleted)
             socket.off('messageSeen', onSeen)
@@ -313,6 +598,7 @@ const ChatInner = () => {
         if (!text || !activeRoom) return
         socketSend({ roomId: activeRoom._id, content: text })
         setInput('')
+        setShowEmojiPicker(false)
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         if (typingTimer.current) clearTimeout(typingTimer.current)
         emitStopTyping(activeRoom._id)
@@ -330,7 +616,7 @@ const ChatInner = () => {
             setMsgsLoading(true)
             try {
                 const older = await getMessages(activeRoom._id, nextPage, 50)
-                setMessages(prev => [...older, ...prev])
+                setMessages(prev => [...older.reverse(), ...prev])
                 setPage(nextPage)
                 setHasMore(older.length === 50)
             } catch {
@@ -353,8 +639,46 @@ const ChatInner = () => {
         }
     }
 
+    const handleCreateGroupSubmit = async (groupName: string, members: string[]) => {
+        try {
+            const room = await createRoom({ kind: 'group', members, name: groupName })
+            setRooms(prev => [room, ...prev])
+            setActiveRoom(room)
+            setIsCreateGroupOpen(false)
+            toast.success("Group created!")
+        } catch {
+            toast.error("Failed to create group")
+        }
+    }
+
     return (
         <div className="flex flex-col h-screen overflow-hidden">
+            <AnimatePresence>
+                {isCreateGroupOpen && (
+                    <CreateGroupModal
+                        onClose={() => setIsCreateGroupOpen(false)}
+                        onCreate={handleCreateGroupSubmit}
+                    />
+                )}
+                {showGroupInfo && activeRoom && activeRoom.kind === 'group' && (
+                    <GroupInfoModal
+                        room={activeRoom}
+                        onClose={() => setShowGroupInfo(false)}
+                        profiles={profiles}
+                        currentUserId={currentUserId}
+                        onRoomUpdated={(updatedRoom) => {
+                            setRooms(prev => prev.map(r => r._id === updatedRoom._id ? { ...updatedRoom, lastMessageRecord: r.lastMessageRecord } : r))
+                            setActiveRoom(prev => prev?._id === updatedRoom._id ? { ...updatedRoom, lastMessageRecord: prev.lastMessageRecord } : prev)
+                        }}
+                        onLeave={() => {
+                            setRooms(prev => prev.filter(r => r._id !== activeRoom._id))
+                            setActiveRoom(null)
+                            setShowGroupInfo(false)
+                        }}
+                    />
+                )}
+            </AnimatePresence>
+
             {user?.role === 'UNVERIFIED' && (
                 <div className="w-full bg-[#ff4d00]/20 border-b-2 border-[#ff4d00] py-2 px-6 flex justify-between items-center flex-shrink-0 z-50">
                     <span className="text-sm text-white/90">Please verify your email address. Some features may be limited.</span>
@@ -380,9 +704,14 @@ const ChatInner = () => {
                             <div className='h-full w-[50%] bg-[#ff4d00] flex items-center justify-center text-xs font-bold text-white'>
                                 TALKIE
                             </div>
-                            <span onClick={() => router.push('/buddies')} title="New Conversation" className='hover:text-[#ff4d00] cursor-pointer transition-colors'>
-                                <SquarePen size={20} />
-                            </span>
+                            <div className='flex items-center gap-2'>
+                                <span onClick={() => setIsCreateGroupOpen(true)} title="Create Group" className='hover:text-[#ff4d00] cursor-pointer transition-colors'>
+                                    <Users size={18} />
+                                </span>
+                                <span onClick={() => router.push('/buddies')} title="New Conversation" className='hover:text-[#ff4d00] cursor-pointer transition-colors'>
+                                    <SquarePen size={18} />
+                                </span>
+                            </div>
                         </div>
                         <div className='w-full h-[50%] px-4 py-2'>
                             <input type='text' placeholder='Search' className='w-full h-full bg-[#1c1c1c] border-2 border-[#353535] rounded-full px-4 text-[#ff4d00] placeholder-[#555] focus:outline-none focus:border-[#ff4d00] transition-colors text-sm' />
@@ -436,8 +765,11 @@ const ChatInner = () => {
                                         );
                                     })()}
                                 </div>
-                                <div>
-                                    <p className='text-white font-bold text-base'>
+                                <div 
+                                    className={`flex flex-col ${activeRoom.kind === 'group' ? 'cursor-pointer hover:opacity-80' : ''}`}
+                                    onClick={() => activeRoom.kind === 'group' && setShowGroupInfo(true)}
+                                >
+                                    <p className={`text-white font-bold text-base ${activeRoom.kind === 'group' ? 'underline decoration-[#ff4d00]/50 underline-offset-2' : ''}`}>
                                         {activeRoom.kind === 'dm' 
                                             ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message')
                                             : (activeRoom.name ?? 'Group Chat')}
@@ -470,7 +802,24 @@ const ChatInner = () => {
                             </div>
 
                             {/* Input bar */}
-                            <div className='flex-shrink-0 px-4 py-3 bg-[#1c1c1c] border-t-2 border-[#2a2a2a] flex items-end gap-3'>
+                            <div className='flex-shrink-0 px-4 py-3 bg-[#1c1c1c] border-t-2 border-[#2a2a2a] flex items-end gap-3 relative' ref={emojiPickerRef}>
+                                {showEmojiPicker && (
+                                    <div className="absolute bottom-full left-4 mb-2 z-50 shadow-2xl">
+                                        <EmojiPicker 
+                                            theme={Theme.DARK} 
+                                            onEmojiClick={(emojiData: EmojiClickData) => {
+                                                setInput(prev => prev + emojiData.emoji)
+                                            }} 
+                                        />
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => setShowEmojiPicker(prev => !prev)}
+                                    className='h-12 w-12 flex-shrink-0 bg-[#252525] flex items-center justify-center text-[#888] hover:text-[#ff4d00] transition-colors'
+                                    style={{ clipPath: 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)' }}
+                                >
+                                    <Smile size={20} />
+                                </button>
                                 <textarea
                                     ref={textareaRef}
                                     value={input}

@@ -1,9 +1,9 @@
 import * as RoomRepository from "../repositories/room.repository";
 import * as MessageRepository from "../repositories/message.repository";
 
-export const createRoom = async (requesterId: string, members: string[]) => {
+export const createRoom = async (requesterId: string, members: string[], kind?: "dm" | "group", name?: string) => {
     const membersToInclude = [...new Set([requesterId, ...members])]
-    return RoomRepository.createRoom(membersToInclude);
+    return RoomRepository.createRoom(membersToInclude, kind, name);
 }
 
 export const getRoomByUserId = async (userId: string) => {

@@ -25,7 +25,7 @@ function avatarColor(s: string) {
 export default function ProfilePage({ params }: { params: Promise<{ userId: string }> }) {
     const { userId } = use(params)   // ← unwrap the async params Promise (Next.js 15+)
     const router = useRouter()
-    const { user: me } = useAuth()
+    const { user: me, logout } = useAuth()
     const [profile, setProfile] = useState<UserProfile | null>(null)
     const [loading, setLoading] = useState(true)
     const [isBuddy, setIsBuddy] = useState(false)
@@ -159,8 +159,8 @@ export default function ProfilePage({ params }: { params: Promise<{ userId: stri
                     </div>
                 )}
 
-                {/* Actions — only show for other users */}
-                {!isMe && (
+                {/* Actions */}
+                {!isMe ? (
                     <div className='flex gap-3'>
                         <button
                             onClick={handleMessage}
@@ -203,6 +203,14 @@ export default function ProfilePage({ params }: { params: Promise<{ userId: stri
                             <Shield size={15} />
                         </button>
                     </div>
+                ) : (
+                    <button
+                        onClick={logout}
+                        className='w-full h-11 flex items-center justify-center gap-2 bg-red-600/10 text-red-500 border-2 border-red-500/50 text-sm font-bold hover:bg-red-500 hover:text-white transition-colors active:scale-95 mt-4'
+                        style={{ clipPath: CLIP }}
+                    >
+                        Log Out
+                    </button>
                 )}
             </div>
         </div>

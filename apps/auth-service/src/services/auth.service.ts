@@ -1,4 +1,4 @@
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 import env from '../config/env'
 import { assignRole, createRefreshToken, createUser, createVerificationToken, deleteRefreshToken, findLatestVerificationToken, findRefreshToken, findUserByEmail, findUserById, findVerificationToken, getRolesByUserId, markTokensUsed, rotateRefreshToken, updateUserRole } from '../repositories/auth.repository';
 import jwt from 'jsonwebtoken';
@@ -149,7 +149,7 @@ export const resendVerificationMail = async (userId: string) => {
         logger.warn('Resend verification — user record not found', { userId });
         throw new Error("USER NOT FOUND");
     }
-    await sendVerificationMail(user.id, user.email)
+    await sendVerificationMail(user, user.email)
     logger.info('Verification email resent successfully', { userId });
     return { message: 'Verification email sent' }
 

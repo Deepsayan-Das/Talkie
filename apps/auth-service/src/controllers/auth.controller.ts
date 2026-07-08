@@ -18,8 +18,8 @@ export const registerController = async (req: Request, res: Response) => {
         logger.info('User registered successfully', { userId: user.id, email });
         res.cookie('refreshToken', user.refreshToken, {
             httpOnly: true,
-            secure: true,
-            sameSite: 'strict'
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax'
         }).status(201).json({ success: true, data: user })
     }
     catch (error: any) {
@@ -46,8 +46,8 @@ export const loginController = async (req: Request, res: Response) => {
         logger.info('User logged in successfully', { email });
         const cookieOptions: any = {
             httpOnly: true,
-            secure: true,
-            sameSite: 'strict'
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax'
         };
         if (user?.role !== 'UNVERIFIED') {
             cookieOptions.maxAge = 7 * 24 * 60 * 60 * 1000;
@@ -78,8 +78,8 @@ export const verifyUserController = async (req: Request, res: Response) => {
         // accessToken in body, refreshToken in httpOnly cookie
         res.cookie('refreshToken', result.refreshToken, {
             httpOnly: true,
-            secure: true,
-            sameSite: 'strict',
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000
         }).status(200).json({ success: true, data: { accessToken: result.accessToken } })
     } catch (error: any) {
@@ -150,10 +150,11 @@ export const rotateTokensController = async (req: Request, res: Response) => {
         const payload = jwt.decode(result.accessToken) as any;
         const cookieOptions: any = {
             httpOnly: true,
-            secure: true,
-            sameSite: 'strict'
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax'
         };
-        if (payload?.role !== 'UNVERIFIED') {
+        const isUnverified = Array.isArray(payload?.role) ? payload.role.includes('UNVERIFIED') : payload?.role === 'UNVERIFIED';
+        if (!isUnverified) {
             cookieOptions.maxAge = 7 * 24 * 60 * 60 * 1000;
         }
         res.cookie('refreshToken', result.refreshToken, cookieOptions).status(200).json({ success: true, data: { accessToken: result.accessToken } })
@@ -193,8 +194,8 @@ export const logoutController = async (req: Request, res: Response) => {
         // Clear the refreshToken cookie
         res.clearCookie('refreshToken', {
             httpOnly: true,
-            secure: true,
-            sameSite: 'strict'
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax'
         }).status(200).json({ success: true, message: 'Logged out successfully' })
     } catch (error: any) {
         if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {

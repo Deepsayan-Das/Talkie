@@ -42,6 +42,7 @@ export interface Room {
     createdBy?: string
     createdAt: string
     updatedAt: string
+    lastMessageRecord?: ChatMessage
 }
 
 // ─── Rooms ────────────────────────────────────────────────────────────────────
@@ -71,6 +72,36 @@ export async function createRoom(payload: {
 // DELETE /chat/room/:roomId
 export async function deleteRoom(roomId: string): Promise<void> {
     await api.delete(`/chat/room/${roomId}`)
+}
+
+// PATCH /chat/room/:roomId
+export async function updateGroupInfo(roomId: string, payload: { name?: string, description?: string, avatar?: string }): Promise<Room> {
+    const { data } = await api.patch(`/chat/room/${roomId}`, payload)
+    return data.data
+}
+
+// POST /chat/room/:roomId/member
+export async function addMember(roomId: string, memberId: string): Promise<Room> {
+    const { data } = await api.post(`/chat/room/${roomId}/member`, { memberId })
+    return data.data
+}
+
+// DELETE /chat/room/:roomId/member
+export async function removeMember(roomId: string, memberId: string): Promise<Room> {
+    const { data } = await api.delete(`/chat/room/${roomId}/member`, { data: { memberId } })
+    return data.data
+}
+
+// PATCH /chat/room/:roomId/member/:memberId/promote
+export async function promoteMember(roomId: string, memberId: string): Promise<Room> {
+    const { data } = await api.patch(`/chat/room/${roomId}/member/${memberId}/promote`)
+    return data.data
+}
+
+// PATCH /chat/room/:roomId/member/:memberId/demote
+export async function demoteMember(roomId: string, memberId: string): Promise<Room> {
+    const { data } = await api.patch(`/chat/room/${roomId}/member/${memberId}/demote`)
+    return data.data
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
