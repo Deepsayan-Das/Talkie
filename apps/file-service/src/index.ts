@@ -3,6 +3,7 @@ import env from './config/env';
 import fileRouter from './routes/file.routes';
 import logger from './config/logger';
 import { metrics } from './config/metrics';
+import { initS3 } from './repository/s3.repository';
 
 const app = express();
 
@@ -15,6 +16,16 @@ app.get('/metrics', async (req, res) => {
     res.send(await metrics.register.metrics());
 });
 
-app.listen(port, () => {
-    logger.info(`File service is running on port ${port}`);
-});
+const startServer = async () => {
+    try {
+        await initS3();
+        app.listen(port, () => {
+            logger.info(`File service is running on port ${port}`);
+        });
+    } catch (error) {
+        logger.error('Failed to start file service:', error);
+        process.exit(1);
+    }
+};
+
+startServer();

@@ -64,6 +64,7 @@ export async function createRoom(payload: {
     members: string[]
     name?: string
     description?: string
+    avatar?: string
 }): Promise<Room> {
     const { data } = await api.post('/chat/room', payload)
     return data.data

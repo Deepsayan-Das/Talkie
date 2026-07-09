@@ -1,6 +1,6 @@
 import { Room } from "../models/rooms.model";
 
-export const createRoom = async (memberIds: string[], kind?: "dm" | "group", name?: string) => {
+export const createRoom = async (memberIds: string[], kind?: "dm" | "group", name?: string, avatar?: string) => {
     const finalKind = kind || (memberIds.length > 2 ? "group" : "dm")
 
     if (finalKind === "dm") {
@@ -22,7 +22,7 @@ export const createRoom = async (memberIds: string[], kind?: "dm" | "group", nam
             ...(finalKind === "group" && index === 0 ? { role: "owner" } : {})
         })),
         kind: finalKind,
-        ...(finalKind === "group" && { createdBy: memberIds[0], name })
+        ...(finalKind === "group" && { createdBy: memberIds[0], name, avatar })
     })
     await room.save();
     return room;

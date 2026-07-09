@@ -6,7 +6,6 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 export const api = axios.create({
     baseURL: BASE_URL,
     withCredentials: true,   // send/receive httpOnly refreshToken cookie
-    headers: { 'Content-Type': 'application/json' },
 })
 
 // Attach accessToken from storage to every request (verified → localStorage, unverified → sessionStorage)

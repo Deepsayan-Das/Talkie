@@ -1,6 +1,6 @@
 'use client'
 
-import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile } from 'lucide-react'
+import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, FileText } from 'lucide-react'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -11,7 +11,7 @@ import EmojiPicker, { Theme, EmojiClickData } from 'emoji-picker-react'
 import { useAuth } from '@/context/AuthContext'
 import { resendVerification } from '@/lib/auth'
 import { useSocket } from '@/context/SocketContext'
-import { getUserProfile, getAllRelations } from '@/lib/user'
+import { getUserProfile, getAllRelations, uploadFile } from '@/lib/user'
 import { getRooms, getMessages, createRoom, updateGroupInfo, removeMember, promoteMember, demoteMember } from '@/lib/chat'
 import { joinRoom, leaveRoom, sendMessage as socketSend, emitTyping, emitStopTyping, markAsSeen } from '@/lib/socket'
 import type { Room, ChatMessage } from '@/lib/chat'
@@ -81,9 +81,22 @@ const MessageBubble = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) =
             ) : (
                 <div
                     style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
-                    className={`px-4 py-3 text-sm leading-relaxed ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
+                    className={`px-4 py-3 text-sm leading-relaxed flex flex-col gap-2 ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
                 >
-                    {msg.content}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                            {msg.attachments.map((att, i) => (
+                                att.contentType.startsWith('image/') ? (
+                                    <img key={i} src={att.url} alt="attachment" className="max-w-full rounded bg-black/20" />
+                                ) : (
+                                    <a key={i} href={att.url} target="_blank" rel="noreferrer" className="underline text-sm break-all font-bold">
+                                        📄 Download File
+                                    </a>
+                                )
+                            ))}
+                        </div>
+                    )}
+                    {msg.content && <span>{msg.content}</span>}
                 </div>
             )}
             <div className={`flex items-center gap-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
@@ -158,9 +171,13 @@ const CreateGroupModal = ({
     onCreate
 }: {
     onClose: () => void,
-    onCreate: (name: string, members: string[]) => void
+    onCreate: (name: string, members: string[], avatar?: string) => void
 }) => {
     const [name, setName] = useState('')
+    const [avatarUrl, setAvatarUrl] = useState('')
+    const [uploadingAvatar, setUploadingAvatar] = useState(false)
+    const [dragActive, setDragActive] = useState(false)
+    const fileInputRef = useRef<HTMLInputElement>(null)
     const [buddies, setBuddies] = useState<{ id: string, name: string }[]>([])
     const [selected, setSelected] = useState<Set<string>>(new Set())
     const [loading, setLoading] = useState(true)
@@ -179,6 +196,31 @@ const CreateGroupModal = ({
         })
     }, [user?.id])
 
+    const handleUpload = async (file: File) => {
+        setUploadingAvatar(true)
+        try {
+            const res = await uploadFile(file)
+            setAvatarUrl(res.url)
+            toast.success("Avatar uploaded")
+        } catch {
+            toast.error("Failed to upload avatar")
+        } finally {
+            setUploadingAvatar(false)
+        }
+    }
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault()
+        setDragActive(false)
+        const file = e.dataTransfer.files?.[0]
+        if (file) handleUpload(file)
+    }
+
+    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (file) handleUpload(file)
+    }
+
     const toggleBuddy = (id: string) => {
         const next = new Set(selected)
         if (next.has(id)) next.delete(id)
@@ -190,25 +232,48 @@ const CreateGroupModal = ({
         e.preventDefault()
         if (!name.trim()) return toast.error("Group name is required")
         if (selected.size === 0) return toast.error("Select at least one member")
-        onCreate(name.trim(), Array.from(selected))
+        onCreate(name.trim(), Array.from(selected), avatarUrl)
     }
 
     return (
-        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-[#131313] z-[100] flex flex-col items-center pt-0 md:pt-10 overflow-y-auto pb-20">
             <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className={`w-full max-w-md bg-[#252525] flex flex-col p-8 gap-6 shadow-2xl ${jetbrains.className}`}
+                initial={{ opacity: 0, y: 50 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 50 }}
+                className={`w-full max-w-2xl bg-[#252525] flex flex-col min-h-screen md:min-h-0 p-8 shadow-2xl ${jetbrains.className}`}
             >
-                <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-black text-white">NEW GROUP</h2>
-                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors">✕</button>
+                <div className="flex justify-between items-center mb-8">
+                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors flex items-center gap-2">
+                        <ArrowLeft size={24} /> <span className="font-bold">BACK</span>
+                    </button>
+                    <h2 className="text-2xl md:text-3xl font-black text-white">NEW GROUP</h2>
                 </div>
 
-                <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+                <form onSubmit={handleSubmit} className="flex flex-col gap-8 flex-1">
+                    <div 
+                        className={`flex flex-col items-center justify-center p-8 border-4 border-dashed rounded-xl transition-colors cursor-pointer ${dragActive ? 'border-[#ff4d00] bg-[#ff4d00]/10' : 'border-[#353535] hover:border-[#ff4d00]/50'}`}
+                        onDragOver={e => { e.preventDefault(); setDragActive(true); }}
+                        onDragLeave={() => setDragActive(false)}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                    >
+                        <input type="file" ref={fileInputRef} onChange={handleAvatarChange} className="hidden" accept="image/*" />
+                        
+                        {avatarUrl ? (
+                            <img src={avatarUrl} alt="Preview" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
+                        ) : (
+                            <div className="w-32 h-32 rounded-full bg-[#1c1c1c] flex items-center justify-center text-[#ff4d00]">
+                                {uploadingAvatar ? <Loader2 size={40} className="animate-spin" /> : <UserCircle size={64} />}
+                            </div>
+                        )}
+                        <p className={`mt-4 text-[#888] font-bold text-center ${anybody.className}`}>
+                            {uploadingAvatar ? 'Uploading...' : 'Drag & Drop an avatar here, or click to select'}
+                        </p>
+                    </div>
+
                     <div className="flex flex-col">
-                        <label className={`text-sm text-[#aaa] mb-1 font-light ${anybody.className}`}>
+                        <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
                             Group Name <span className="text-[#ff4d00]">*</span>
                         </label>
                         <input
@@ -216,30 +281,30 @@ const CreateGroupModal = ({
                             value={name}
                             onChange={e => setName(e.target.value)}
                             placeholder="e.g. The Squad"
-                            className={`w-full h-12 bg-[#353535] outline-none border-b-4 border-b-[#525252] focus:border-b-[#ff4d00] transition-colors px-4 text-white font-bold ${anybody.className}`}
+                            className={`w-full h-14 bg-[#353535] outline-none border-b-4 border-b-[#525252] focus:border-b-[#ff4d00] transition-colors px-6 text-white font-bold text-lg ${anybody.className}`}
                         />
                     </div>
 
-                    <div className="flex flex-col">
+                    <div className="flex flex-col flex-1">
                         <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
                             Select Members ({selected.size}) <span className="text-[#ff4d00]">*</span>
                         </label>
-                        <div className="max-h-48 overflow-y-auto flex flex-col gap-2 bg-[#1c1c1c] p-2 border-2 border-[#353535]">
+                        <div className="flex-1 overflow-y-auto flex flex-col gap-2 bg-[#1c1c1c] p-4 border-2 border-[#353535] min-h-[250px] max-h-[350px]">
                             {loading ? (
-                                <div className="flex justify-center py-4"><Loader2 className="animate-spin text-[#ff4d00]" /></div>
+                                <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#ff4d00]" size={32} /></div>
                             ) : buddies.length === 0 ? (
-                                <p className={`text-center text-[#555] text-sm py-4 ${anybody.className}`}>No buddies available</p>
+                                <p className={`text-center text-[#555] py-10 ${anybody.className}`}>No buddies available to add</p>
                             ) : (
                                 buddies.map(b => (
                                     <div
                                         key={b.id}
                                         onClick={() => toggleBuddy(b.id)}
-                                        className={`p-3 flex items-center justify-between cursor-pointer border-2 transition-colors ${
-                                            selected.has(b.id) ? 'bg-[#ff4d00]/20 border-[#ff4d00]' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]/50'
+                                        className={`p-4 flex items-center justify-between cursor-pointer border-2 transition-all ${
+                                            selected.has(b.id) ? 'bg-[#ff4d00]/20 border-[#ff4d00] translate-x-2' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]/50'
                                         }`}
                                     >
-                                        <span className={`text-sm text-white font-bold ${anybody.className}`}>{b.name}</span>
-                                        {selected.has(b.id) && <Check size={16} className="text-[#ff4d00]" />}
+                                        <span className={`text-base text-white font-bold ${anybody.className}`}>{b.name}</span>
+                                        {selected.has(b.id) && <Check size={20} className="text-[#ff4d00]" />}
                                     </div>
                                 ))
                             )}
@@ -249,7 +314,8 @@ const CreateGroupModal = ({
                     <motion.button
                         whileTap={{ scale: 0.97 }}
                         type="submit"
-                        className={`w-full h-12 bg-[#ff4d00] text-xl font-extrabold text-white mt-2 [clip-path:polygon(16px_0%,100%_0%,100%_calc(100%-16px),calc(100%-16px)_100%,0%_100%,0%_16px)]`}
+                        disabled={uploadingAvatar}
+                        className={`w-full h-14 bg-[#ff4d00] text-xl font-extrabold text-white mt-4 disabled:opacity-50 [clip-path:polygon(16px_0%,100%_0%,100%_calc(100%-16px),calc(100%-16px)_100%,0%_100%,0%_16px)]`}
                     >
                         CREATE GROUP
                     </motion.button>
@@ -276,16 +342,46 @@ const GroupInfoModal = ({
     onLeave: () => void
 }) => {
     const [name, setName] = useState(room.name || '')
+    const [avatarUrl, setAvatarUrl] = useState(room.avatar || '')
     const [isEditing, setIsEditing] = useState(false)
     const [loading, setLoading] = useState(false)
+    const [uploadingAvatar, setUploadingAvatar] = useState(false)
+    const [dragActive, setDragActive] = useState(false)
+    const avatarInputRef = useRef<HTMLInputElement>(null)
     const myRole = room.members.find(m => m.userId === currentUserId)?.role || 'member'
     const isAdmin = myRole === 'admin' || myRole === 'owner'
+
+    const handleUpload = async (file: File) => {
+        setUploadingAvatar(true)
+        try {
+            const res = await uploadFile(file)
+            setAvatarUrl(res.url)
+            toast.success("Avatar uploaded")
+        } catch {
+            toast.error("Failed to upload avatar")
+        } finally {
+            setUploadingAvatar(false)
+        }
+    }
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault()
+        setDragActive(false)
+        if (!isEditing) return
+        const file = e.dataTransfer.files?.[0]
+        if (file) handleUpload(file)
+    }
+
+    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (file) handleUpload(file)
+    }
 
     const handleUpdate = async () => {
         if (!name.trim()) return toast.error("Name required")
         setLoading(true)
         try {
-            const updated = await updateGroupInfo(room._id, { name: name.trim() })
+            const updated = await updateGroupInfo(room._id, { name: name.trim(), avatar: avatarUrl })
             onRoomUpdated(updated)
             setIsEditing(false)
             toast.success("Group updated")
@@ -321,68 +417,108 @@ const GroupInfoModal = ({
     }
 
     return (
-        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-[#131313] z-[100] flex flex-col items-center pt-0 md:pt-10 overflow-y-auto pb-20">
             <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className={`w-full max-w-md bg-[#252525] flex flex-col p-8 gap-6 shadow-2xl ${jetbrains.className} max-h-[80vh] overflow-y-auto`}
+                initial={{ opacity: 0, y: 50 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 50 }}
+                className={`w-full max-w-2xl bg-[#252525] flex flex-col min-h-screen md:min-h-0 p-8 shadow-2xl ${jetbrains.className}`}
             >
-                <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-black text-white">GROUP INFO</h2>
-                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors">✕</button>
+                <div className="flex justify-between items-center mb-8">
+                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors flex items-center gap-2">
+                        <ArrowLeft size={24} /> <span className="font-bold">BACK</span>
+                    </button>
+                    <h2 className="text-2xl md:text-3xl font-black text-white">GROUP INFO</h2>
                 </div>
 
                 {isEditing ? (
-                    <div className="flex flex-col gap-2">
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={e => setName(e.target.value)}
-                            className={`w-full h-10 bg-[#353535] outline-none border-b-2 border-b-[#ff4d00] px-4 text-white font-bold ${anybody.className}`}
-                        />
-                        <div className="flex gap-2">
-                            <button onClick={handleUpdate} disabled={loading} className="flex-1 bg-[#ff4d00] text-white py-1 text-sm font-bold">Save</button>
-                            <button onClick={() => setIsEditing(false)} className="flex-1 bg-[#353535] text-white py-1 text-sm font-bold">Cancel</button>
+                    <div className="flex flex-col gap-8">
+                        <div 
+                            className={`flex flex-col items-center justify-center p-8 border-4 border-dashed rounded-xl transition-colors cursor-pointer ${dragActive ? 'border-[#ff4d00] bg-[#ff4d00]/10' : 'border-[#353535] hover:border-[#ff4d00]/50'}`}
+                            onDragOver={e => { e.preventDefault(); setDragActive(true); }}
+                            onDragLeave={() => setDragActive(false)}
+                            onDrop={handleDrop}
+                            onClick={() => avatarInputRef.current?.click()}
+                        >
+                            <input type="file" ref={avatarInputRef} className="hidden" onChange={handleAvatarChange} accept="image/*" />
+                            
+                            {avatarUrl ? (
+                                <img src={avatarUrl} alt="Group Avatar" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
+                            ) : (
+                                <div className="w-32 h-32 rounded-full bg-[#1c1c1c] flex items-center justify-center text-[#ff4d00]">
+                                    {uploadingAvatar ? <Loader2 size={40} className="animate-spin" /> : <UserCircle size={64} />}
+                                </div>
+                            )}
+                            <p className={`mt-4 text-[#888] font-bold text-center ${anybody.className}`}>
+                                {uploadingAvatar ? 'Uploading...' : 'Drag & Drop to change avatar, or click'}
+                            </p>
+                        </div>
+
+                        <div className="flex flex-col">
+                            <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
+                                Group Name <span className="text-[#ff4d00]">*</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={name}
+                                onChange={e => setName(e.target.value)}
+                                className={`w-full h-14 bg-[#353535] outline-none border-b-4 border-b-[#525252] focus:border-b-[#ff4d00] transition-colors px-6 text-white font-bold text-lg ${anybody.className}`}
+                            />
+                        </div>
+                        <div className="flex gap-4">
+                            <button onClick={handleUpdate} disabled={loading || uploadingAvatar} className="flex-1 bg-[#ff4d00] text-white py-3 text-lg font-bold disabled:opacity-50">Save Changes</button>
+                            <button onClick={() => setIsEditing(false)} className="flex-1 bg-[#353535] text-white py-3 text-lg font-bold">Cancel</button>
                         </div>
                     </div>
                 ) : (
-                    <div className="flex items-center justify-between">
-                        <span className={`text-xl text-white font-bold ${anybody.className}`}>{room.name || 'Group Chat'}</span>
-                        {isAdmin && (
-                            <button onClick={() => setIsEditing(true)} className="text-[#ff4d00] hover:text-white text-sm underline">Edit</button>
+                    <div className="flex flex-col items-center gap-6">
+                        {room.avatar ? (
+                            <img src={room.avatar} alt="Group Avatar" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
+                        ) : (
+                            <div className="w-32 h-32 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-5xl font-black shadow-xl">
+                                {room.name?.[0]?.toUpperCase() || 'G'}
+                            </div>
                         )}
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="flex items-center gap-4">
+                                <span className={`text-3xl text-white font-black ${anybody.className}`}>{room.name || 'Group Chat'}</span>
+                                {isAdmin && (
+                                    <button onClick={() => setIsEditing(true)} className="text-[#ff4d00] hover:text-white text-sm underline font-bold bg-[#ff4d00]/20 px-3 py-1 rounded-full">Edit</button>
+                                )}
+                            </div>
+                            <span className="text-sm text-[#888] bg-[#1c1c1c] px-4 py-1 rounded-full font-bold">{room.members.length} members</span>
+                        </div>
                     </div>
                 )}
 
-                <div className="flex flex-col gap-2 mt-2">
-                    <label className={`text-sm text-[#aaa] font-light ${anybody.className}`}>Members ({room.members.length})</label>
-                    <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-4 mt-8 flex-1">
+                    <label className={`text-lg text-[#aaa] font-bold ${anybody.className}`}>Members ({room.members.length})</label>
+                    <div className="flex flex-col gap-3 overflow-y-auto pr-2">
                         {room.members.map(m => {
                             const isMe = m.userId === currentUserId
                             const prof = profiles[m.userId]
                             return (
-                                <div key={m.userId} className="flex items-center justify-between bg-[#1c1c1c] p-3 border-2 border-[#353535]">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-xs font-bold">
+                                <div key={m.userId} className="flex items-center justify-between bg-[#1c1c1c] p-4 border-l-4 border-[#353535] hover:border-[#ff4d00] transition-colors">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-sm font-bold shadow-md">
                                             {prof?.avatar ? <img src={prof.avatar} alt="avatar" className="w-full h-full rounded-full object-cover" /> : (prof?.displayName?.[0]?.toUpperCase() || '?')}
                                         </div>
                                         <div className="flex flex-col">
-                                            <span className={`text-sm text-white font-bold ${anybody.className}`}>{prof?.displayName || 'Unknown'} {isMe && '(You)'}</span>
-                                            <span className="text-[10px] text-[#888] uppercase">{m.role}</span>
+                                            <span className={`text-base text-white font-bold ${anybody.className}`}>{prof?.displayName || 'Unknown'} {isMe && <span className="text-[#ff4d00]">(You)</span>}</span>
+                                            <span className="text-[10px] text-[#888] uppercase tracking-wider font-black">{m.role}</span>
                                         </div>
                                     </div>
                                     
                                     {!isMe && isAdmin && m.role !== 'owner' && (
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-3">
                                             {m.role === 'member' && myRole === 'owner' && (
-                                                <button onClick={() => handleAction('promote', m.userId)} className="text-[10px] text-green-500 hover:underline">Promote</button>
+                                                <button onClick={() => handleAction('promote', m.userId)} className="text-xs text-green-500 hover:text-green-400 font-bold bg-green-500/10 px-3 py-1 rounded-full transition-colors">Promote</button>
                                             )}
                                             {m.role === 'admin' && myRole === 'owner' && (
-                                                <button onClick={() => handleAction('demote', m.userId)} className="text-[10px] text-orange-500 hover:underline">Demote</button>
+                                                <button onClick={() => handleAction('demote', m.userId)} className="text-xs text-orange-500 hover:text-orange-400 font-bold bg-orange-500/10 px-3 py-1 rounded-full transition-colors">Demote</button>
                                             )}
                                             {((myRole === 'owner') || (myRole === 'admin' && m.role === 'member')) && (
-                                                <button onClick={() => handleAction('remove', m.userId)} className="text-[10px] text-red-500 hover:underline">Remove</button>
+                                                <button onClick={() => handleAction('remove', m.userId)} className="text-xs text-red-500 hover:text-red-400 font-bold bg-red-500/10 px-3 py-1 rounded-full transition-colors">Remove</button>
                                             )}
                                         </div>
                                     )}
@@ -395,7 +531,7 @@ const GroupInfoModal = ({
                 <motion.button
                     whileTap={{ scale: 0.97 }}
                     onClick={handleLeave}
-                    className={`w-full h-10 bg-red-600/20 text-red-500 text-sm font-extrabold mt-4 border-2 border-red-500 hover:bg-red-500 hover:text-white transition-colors`}
+                    className={`w-full h-14 bg-red-600/10 text-red-500 text-lg font-extrabold mt-8 border-2 border-red-500/50 hover:bg-red-500 hover:text-white transition-colors [clip-path:polygon(16px_0%,100%_0%,100%_calc(100%-16px),calc(100%-16px)_100%,0%_100%,0%_16px)]`}
                 >
                     LEAVE GROUP
                 </motion.button>
@@ -431,6 +567,8 @@ const ChatInner = () => {
     const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
     const prevRoomId   = useRef<string | null>(null)
     const emojiPickerRef = useRef<HTMLDivElement>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
+    const [uploadingFile, setUploadingFile] = useState(false)
 
     // ── Click outside emoji picker ────────────────────────────────────────────
     useEffect(() => {
@@ -560,12 +698,17 @@ const ChatInner = () => {
             }))
         }
 
+        const onError = (error: { event: string, message: string }) => {
+            toast.error(`Error: ${error.message}`);
+        }
+
         socket.on('newMessage', onMessage)
         socket.on('userTyping', onTyping)
         socket.on('userStoppedTyping', onStopTyping)
         socket.on('messageEdited', onMessageEdited)
         socket.on('messageDeleted', onMessageDeleted)
         socket.on('messageSeen', onSeen)
+        socket.on('error', onError)
 
         return () => {
             socket.off('newMessage', onMessage)
@@ -574,6 +717,7 @@ const ChatInner = () => {
             socket.off('messageEdited', onMessageEdited)
             socket.off('messageDeleted', onMessageDeleted)
             socket.off('messageSeen', onSeen)
+            socket.off('error', onError)
         }
     }, [socket, activeRoom, user?.id])
 
@@ -606,6 +750,28 @@ const ChatInner = () => {
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessageHandler() }
+    }
+
+    // ── Handle File Upload ────────────────────────────────────────────────
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file || !activeRoom) return
+        
+        setUploadingFile(true)
+        try {
+            const res = await uploadFile(file)
+            socketSend({
+                roomId: activeRoom._id,
+                content: '',
+                attachments: [{ url: res.url, contentType: file.type, fileSize: file.size }]
+            })
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err.message || "Unknown error";
+            toast.error("Failed to upload file: " + msg)
+        } finally {
+            setUploadingFile(false)
+            if (fileInputRef.current) fileInputRef.current.value = ''
+        }
     }
 
     // ── Load older messages on scroll to top ──────────────────────────────
@@ -695,10 +861,10 @@ const ChatInner = () => {
                 }
             `}</style>
 
-            <div className='w-full flex-1 bg-[#131313] flex overflow-hidden'>
+            <div className='w-full flex-1 bg-[#131313] flex flex-col md:flex-row overflow-hidden'>
 
                 {/* ── Left sidebar – chat list ──────────────────────────────── */}
-                <div className='h-full w-[23%] bg-[#252525] flex flex-col flex-shrink-0'>
+                <div className={`h-full w-full md:w-[23%] bg-[#252525] flex-col flex-shrink-0 ${activeRoom ? 'hidden md:flex' : 'flex'}`}>
                     <div className='h-32 border-b-2 border-[#353535] flex flex-col items-center justify-center flex-shrink-0'>
                         <div className='w-full h-[50%] flex items-center justify-between px-6'>
                             <div className='h-full w-[50%] bg-[#ff4d00] flex items-center justify-center text-xs font-bold text-white'>
@@ -737,7 +903,7 @@ const ChatInner = () => {
                 </div>
 
                 {/* ── Chat area ─────────────────────────────────────────────── */}
-                <div className='h-full flex-1 bg-[#181818] flex flex-col'>
+                <div className={`h-full flex-1 bg-[#181818] flex-col ${!activeRoom ? 'hidden md:flex' : 'flex'}`}>
 
                     {!activeRoom ? (
                         <div className='flex-1 flex items-center justify-center text-[#444]'>
@@ -746,7 +912,10 @@ const ChatInner = () => {
                     ) : (
                         <>
                             {/* Header */}
-                            <div className='h-20 flex-shrink-0 bg-[#252525] border-b-2 border-[#353535] flex items-center gap-4 px-6'>
+                            <div className='h-20 flex-shrink-0 bg-[#252525] border-b-2 border-[#353535] flex items-center gap-4 px-4 md:px-6'>
+                                <button onClick={() => setActiveRoom(null)} className="md:hidden text-[#888] hover:text-white">
+                                    <ArrowLeft size={24} />
+                                </button>
                                 <div className='relative'>
                                     {(() => {
                                         const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
@@ -820,6 +989,21 @@ const ChatInner = () => {
                                 >
                                     <Smile size={20} />
                                 </button>
+                                
+                                <input 
+                                    type="file" 
+                                    ref={fileInputRef} 
+                                    onChange={handleFileUpload} 
+                                    className="hidden" 
+                                />
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={uploadingFile}
+                                    className='h-12 w-12 flex-shrink-0 bg-[#252525] flex items-center justify-center text-[#888] hover:text-[#ff4d00] transition-colors disabled:opacity-50'
+                                    style={{ clipPath: 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)' }}
+                                >
+                                    {uploadingFile ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
+                                </button>
                                 <textarea
                                     ref={textareaRef}
                                     value={input}
@@ -844,7 +1028,7 @@ const ChatInner = () => {
                 </div>
 
                 {/* ── Right sidebar – navigation ─────────────────────────────── */}
-                <div className='h-full w-[5%] bg-[#252525] border-l-2 border-[#353535] flex-shrink-0 flex flex-col items-center py-5 gap-2'>
+                <div className='h-14 w-full md:h-full md:w-[5%] bg-[#252525] border-t-2 md:border-l-2 md:border-t-0 border-[#353535] flex-shrink-0 flex flex-row md:flex-col items-center justify-around md:justify-start py-0 md:py-5 gap-2 order-last md:order-last'>
                     {[
                         { href: '/chat',       icon: <MessageSquare size={18} />, title: 'Chats'      },
                         { href: '/search',     icon: <Search        size={18} />, title: 'Search'     },

@@ -640,6 +640,24 @@ REDIS_PORT=6379
 
 ---
 
+## Roadmap & Missing Features (WhatsApp Clone TODOs)
+
+To evolve Talkie from a functional chat app into a fully-featured, production-ready WhatsApp competitor, the following features are planned:
+
+- [ ] **End-to-End Encryption (E2EE):** Implement the Signal Protocol (or similar) on the client side so backend servers cannot read message contents.
+- [ ] **Read Receipts & Delivery Status:** Implement robust double gray ticks (delivered) and double blue ticks (read) that sync perfectly, replacing the basic `seenBy` array.
+- [ ] **Voice & Video Calls:** Integrate WebRTC for peer-to-peer real-time audio and video communications.
+- [ ] **Voice Notes / Audio Messages:** Allow users to record and send audio directly inside the chat interface.
+- [ ] **Message Replies / Quotes:** UI support to swipe/click to reply to specific messages and render the quoted bubble.
+- [ ] **Message Reactions:** Long-press or hover over a message to attach emoji reactions.
+- [ ] **Online / Last Seen Status:** A robust connection state tracker to show exact offline times and accurate "last seen at X" timestamps.
+- [ ] **Push Notifications:** Integrate Firebase Cloud Messaging (FCM) or Apple Push Notifications to deliver messages when the app is closed.
+- [ ] **Status / Stories:** Support for 24-hour disappearing photo/video/text updates.
+- [ ] **Message Forwarding:** Seamlessly forward messages to other chats.
+- [ ] **Client-side Offline Persistence:** Save chats to a local database (like IndexedDB) so the UI loads instantly without network requests, mimicking native mobile apps.
+
+---
+
 ## Interview Reference
 
 **Q: What's the difference between authentication and authorization?**

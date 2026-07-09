@@ -13,7 +13,10 @@ const messageSchema = new mongoose.Schema({
     },
     content: {
         type: String,
-        required: true
+        required: function() {
+            // @ts-ignore
+            return !this.attachments || this.attachments.length === 0;
+        }
     },
     attachments: {
         type: [

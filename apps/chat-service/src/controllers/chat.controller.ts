@@ -14,8 +14,8 @@ const resolveStatus = (message: string): number => {
 export const createRoomController = async (req: Request, res: Response) => {
     try {
         const userId = req.headers["x-user-id"] as string;
-        const { members, kind, name } = req.body;
-        const room = await ChatService.createRoom(userId, members, kind, name);
+        const { members, kind, name, avatar } = req.body;
+        const room = await ChatService.createRoom(userId, members, kind, name, avatar);
         return res.status(201).json({ success: true, data: room });
     } catch (error: any) {
         return res.status(resolveStatus(error.message)).json({ success: false, message: error.message });
@@ -46,9 +46,9 @@ export const getRoomByIdController = async (req: Request, res: Response) => {
 export const updateGroupController = async (req: Request, res: Response) => {
     try {
         const userId = req.headers["x-user-id"] as string;
-        const { groupId } = req.params;
+        const { roomId } = req.params;
         const { name, description, avatar } = req.body;
-        const updatedRoom = await ChatService.updateGroup(groupId as string, userId, { name, description, avatar });
+        const updatedRoom = await ChatService.updateGroup(roomId as string, userId, { name, description, avatar });
         return res.status(200).json({ success: true, data: updatedRoom });
     } catch (error: any) {
         return res.status(resolveStatus(error.message)).json({ success: false, message: error.message });

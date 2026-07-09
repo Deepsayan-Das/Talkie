@@ -81,14 +81,18 @@ export async function unblockUser(userId: string): Promise<void> {
     await api.delete(`/user/${userId}/block`)
 }
 
-// ─── Upload avatar ────────────────────────────────────────────────────────────
+// ─── Upload file ────────────────────────────────────────────────────────────
 // POST /file/upload  multipart/form-data  { file }
-// → 200 { success, data: { url } }
-export async function uploadAvatar(file: File): Promise<string> {
+// → 200 { success, data: { url, id } }
+export async function uploadFile(file: File): Promise<{ url: string, id: string }> {
     const formData = new FormData()
     formData.append('file', file)
-    const { data } = await api.post('/file/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    return data.data.url
+    const { data } = await api.post('/file/upload', formData)
+    return data.data
+}
+
+// ─── Upload avatar (alias for backwards compatibility) ───────────────────────
+export async function uploadAvatar(file: File): Promise<string> {
+    const res = await uploadFile(file)
+    return res.url
 }
