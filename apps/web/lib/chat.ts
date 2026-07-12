@@ -21,6 +21,12 @@ export interface ChatMessage {
     replyTo?: string
     seenBy: SeenBy[]
     isDeleted: boolean
+    reactions?: Record<string, string>
+    delivery?: {
+        targetDevices: string[]
+        deliveredDevices: string[]
+        deliveredAt: string | null
+    }
     createdAt: string
     updatedAt: string
 }

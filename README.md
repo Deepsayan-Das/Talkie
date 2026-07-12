@@ -2,7 +2,7 @@
 
 A portfolio-grade microservices chat platform built with modern backend and DevOps practices.
 
-**Stack:** Next.js · Node.js · PostgreSQL · MongoDB · Redis · Socket.IO · Docker · Kubernetes
+**Stack:** Next.js · Node.js · PostgreSQL · MongoDB · Redis · RabbitMQ · Socket.IO · Docker · Kubernetes
 
 ---
 
@@ -135,7 +135,7 @@ One Redis container, separate logical databases (DB index) per service.
 |---|---|---|
 | DB 0 | Auth Service | Blacklisted tokens, refresh token metadata |
 | DB 1 | User Service | Profile cache, online presence |
-| DB 2 | Chat Service | Pub/Sub real-time events, typing indicators |
+| DB 2 | Chat Service | Real-time events, typing indicators |
 | DB 3 | Notification Service | Job queue, deduplication |
 | DB 4 | API Gateway | Rate limit counters |
 
@@ -144,6 +144,17 @@ Cost. Separate logical DBs provide key isolation at zero cost. In production, se
 
 **Why does Redis need a persistent volume?**
 Redis stores blacklisted JWT tokens. If Redis restarts without persistence, a blacklisted token becomes valid again — that is a security vulnerability, not just data loss.
+
+### RabbitMQ
+
+RabbitMQ is used as the central message broker for inter-service async communication.
+
+| Exchange | Type | Purpose |
+|---|---|---|
+| talkie.events | topic | Routes all domain events across the system |
+
+**Why RabbitMQ over Redis Pub/Sub?**
+Redis Pub/Sub is fire-and-forget; if a subscriber is offline, the message is permanently lost. RabbitMQ guarantees delivery, supports retries, durable queues, and dead-lettering, making it significantly more reliable for critical events like welcome emails or user data syncs.
 
 ### Observability Stack
 
@@ -244,7 +255,7 @@ MinIO is S3-compatible — the same AWS SDK code works against MinIO in dev and 
 **Does not own:** Token generation, user data, message content
 
 **Why async events instead of direct REST calls?**
-Auth Service publishes to Redis and moves on immediately. Notification Service picks up the event and sends the email independently. Registration never fails because the email provider is down. This is the fire-and-forget pattern.
+Auth Service publishes an event to RabbitMQ and moves on immediately. Notification Service picks up the event and sends the email independently. Registration never fails because the email provider is down. This is the fire-and-forget pattern with guaranteed delivery.
 
 ### Observability Layer
 **Not a service — cross-cutting infrastructure**
@@ -644,13 +655,13 @@ REDIS_PORT=6379
 
 To evolve Talkie from a functional chat app into a fully-featured, production-ready WhatsApp competitor, the following features are planned:
 
-- [ ] **End-to-End Encryption (E2EE):** Implement the Signal Protocol (or similar) on the client side so backend servers cannot read message contents.
-- [ ] **Read Receipts & Delivery Status:** Implement robust double gray ticks (delivered) and double blue ticks (read) that sync perfectly, replacing the basic `seenBy` array.
+- [ ] **End-to-End Encryption (E2EE):** Implement the Signal Protocol (or similar) on the client side so backend servers cannot read message contents. (In Progress)
+- [x] **Read Receipts & Delivery Status:** Implemented robust double gray ticks (delivered) and double blue ticks (read) that sync perfectly across multiple devices.
 - [ ] **Voice & Video Calls:** Integrate WebRTC for peer-to-peer real-time audio and video communications.
 - [ ] **Voice Notes / Audio Messages:** Allow users to record and send audio directly inside the chat interface.
-- [ ] **Message Replies / Quotes:** UI support to swipe/click to reply to specific messages and render the quoted bubble.
-- [ ] **Message Reactions:** Long-press or hover over a message to attach emoji reactions.
-- [ ] **Online / Last Seen Status:** A robust connection state tracker to show exact offline times and accurate "last seen at X" timestamps.
+- [x] **Message Replies / Quotes:** UI support to swipe/click to reply to specific messages and render the quoted bubble.
+- [x] **Message Reactions:** Long-press or hover over a message to attach emoji reactions.
+- [x] **Online / Last Seen Status:** A robust connection state tracker using Redis presence sets and RabbitMQ offline events to show exact offline times and accurate "last seen at X" timestamps.
 - [ ] **Push Notifications:** Integrate Firebase Cloud Messaging (FCM) or Apple Push Notifications to deliver messages when the app is closed.
 - [ ] **Status / Stories:** Support for 24-hour disappearing photo/video/text updates.
 - [ ] **Message Forwarding:** Seamlessly forward messages to other chats.
@@ -671,7 +682,7 @@ Service isolation — one service crashing doesn't take down the application. In
 Shared databases create hidden coupling. Services depend on each other's tables. Schema changes break multiple services. One database outage takes everything down.
 
 **Q: How do services communicate?**
-Three patterns: synchronous REST for request/response, WebSocket for real-time, async events (Redis Pub/Sub) for side effects that shouldn't block the main flow.
+Three patterns: synchronous REST for request/response, WebSocket for real-time, async events (RabbitMQ) for side effects that shouldn't block the main flow.
 
 **Q: Why hash tokens stored in the database?**
 Defence in depth. If an attacker reads the database, hashed tokens are useless — they cannot be used to impersonate users. Raw tokens would give immediate access to every active session.
@@ -687,6 +698,12 @@ httpOnly cookies cannot be accessed by JavaScript. XSS attacks that steal localS
 
 **Q: What's a migration and why not init scripts?**
 A migration is a versioned, reversible database change. Init scripts run once and are never tracked. Migrations give history of every schema change, ability to roll back, and reliable incremental application across environments.
+
+**Q: How is real-time user presence (Online/Last Seen) tracked across microservices?**
+The Chat Service uses a Redis Set (`presence:{userId}`) to track connected device socket IDs. When a user disconnects their last device, the Chat Service publishes a `chat.user.offline` event to RabbitMQ. The User Service consumes this event and safely updates the exact `last_seen` timestamp in Postgres without blocking the chat infrastructure. When fetching a profile, the API natively checks the Redis cardinality to determine current "Online" status instantly.
+
+**Q: How do you prevent read-modify-write race conditions in MongoDB delivery receipts?**
+When multiple devices acknowledge delivery of a message simultaneously, reading the document, appending a device locally, and saving it can lead to one device overwriting another (lost update). The fix is to use atomic database-level operators like `$addToSet` and `$set`. This forces the database to serialize the updates, ensuring 100% accurate multi-device state tracking without manual locking.
 
 **Q: How do you test microservices without running the full stack?**
 Unit tests mock the repository layer — service logic is tested with fake database functions. Integration tests use supertest to simulate HTTP requests against an in-memory Express app with the service layer mocked. Zero Docker, zero database, zero running server required.
@@ -733,7 +750,7 @@ Change three env variables — MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KE
 diskStorage writes to the server's local filesystem first. In Kubernetes, that disk is ephemeral and not shared across pods. memoryStorage keeps the file in RAM as a Buffer, which is then immediately streamed to MinIO. No local disk dependency.
 
 **Q: How does the Notification Service know when to send an email?**
-It subscribes to Redis Pub/Sub channels. Auth Service publishes an event like auth.user.registered with email and verification link. Notification Service receives it and sends the email. The two services never call each other directly.
+It subscribes to RabbitMQ queues. Auth Service publishes an event like auth.user.registered with email and verification link. Notification Service receives it and sends the email. The two services never call each other directly, and RabbitMQ ensures the event isn't lost if the Notification Service is temporarily down.
 
 **Q: Why move email sending out of Auth Service?**
 Single responsibility. Auth Service owns credentials and tokens — not email delivery. If the email provider is down, Auth should still register the user successfully. Decoupling via events makes the system more resilient.
@@ -749,3 +766,9 @@ JSON logs are machine-parseable. You can filter by service, level, or any field.
 
 **Q: How do you get resume metrics like "handles 500 concurrent users"?**
 Run k6 load tests against the API Gateway while Grafana is open. k6 ramps up concurrent users, hammers endpoints, and reports P95 latency and error rate. Grafana shows the system's behavior under load in real time — memory spikes, event loop lag, request throughput. Screenshot that dashboard during peak load for the resume metric.
+
+**Q: Why does IndexedDB `db.put()` sometimes require three arguments instead of two?**
+When creating an object store without an inline `keyPath` (e.g., `db.createObjectStore("sessions")`), IndexedDB uses "out-of-line" keys. This means the key is completely separate from the stored value, so methods like `put()` or `add()` require you to explicitly pass the key as a separate argument: `db.put("sessions", value, key)`. If the store was created with an inline key path (e.g., `db.createObjectStore("sessions", { keyPath: "conversationId" })`), IndexedDB extracts the key directly from the value object, and you only need two arguments: `db.put("sessions", value)`.
+
+**Q: How does `db.put()` behave when called twice with the same key?**
+`put()` acts as an upsert (insert or update). If you call `db.put("sessions", state, "convo-123")` twice with different payloads, the second call will silently overwrite the existing record rather than duplicating it or throwing an error. If you want it to throw an error when a key already exists, you must use `db.add()` instead.

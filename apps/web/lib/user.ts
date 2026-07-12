@@ -9,6 +9,7 @@ export interface UserProfile {
     avatar?: string
     email: string
     isOnline?: boolean
+    last_seen?: string | null
 }
 
 export type RelationStatus = 'pending' | 'accepted' | 'rejected' | 'blocked'

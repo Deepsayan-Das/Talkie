@@ -25,6 +25,10 @@ const startup = async () => {
         try {
             await db.raw('SELECT 1');
             logger.info('Database connection established');
+            
+            const { initBroker } = await import('./config/broker');
+            await initBroker();
+
             app.listen(env.port, () => {
                 logger.info(`Auth service is running on port ${env.port}`);
             });

@@ -4,6 +4,8 @@ import db from './db/knex'
 import router from './routes/user.routes'
 import logger from './config/logger'
 import { metrics } from './config/metrics'
+import { initBroker } from './config/broker'
+import { initChatSubscriber } from './subscribers/chat.subscriber'
 const app = express()
 
 app.use(express.json())
@@ -25,6 +27,11 @@ const startup = async () => {
         try {
             await db.raw('SELECT 1')
             logger.info('Database connection established')
+            const redis = (await import('./config/redis')).default;
+            await redis.connect();
+            logger.info('Redis connection established')
+            await initBroker();
+            await initChatSubscriber();
             app.listen(env.port, () => {
                 logger.info(`User service is running on port ${env.port}`)
             })

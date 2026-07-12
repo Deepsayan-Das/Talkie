@@ -75,3 +75,8 @@ export const getAllRelations = async (userId: string): Promise<Relationship[]> =
     return relations;
 }
 
+export const updateLastSeen = async (userId: string, lastSeen: Date) => {
+    const count = await db<UserProfile>('users_profile').where({ user_id: userId }).update({ last_seen: lastSeen });
+    return count;
+}
+

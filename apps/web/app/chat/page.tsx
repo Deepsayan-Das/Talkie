@@ -1,6 +1,6 @@
 'use client'
 
-import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, FileText } from 'lucide-react'
+import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, FileText, Reply, X } from 'lucide-react'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -13,7 +13,7 @@ import { resendVerification } from '@/lib/auth'
 import { useSocket } from '@/context/SocketContext'
 import { getUserProfile, getAllRelations, uploadFile } from '@/lib/user'
 import { getRooms, getMessages, createRoom, updateGroupInfo, removeMember, promoteMember, demoteMember } from '@/lib/chat'
-import { joinRoom, leaveRoom, sendMessage as socketSend, emitTyping, emitStopTyping, markAsSeen } from '@/lib/socket'
+import { joinRoom, leaveRoom, sendMessage as socketSend, emitTyping, emitStopTyping, markAsSeen, reactToMessage, messageDelivered } from '@/lib/socket'
 import type { Room, ChatMessage } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
 
@@ -68,48 +68,101 @@ const DateSeparator = ({ label }: { label: string }) => (
     </div>
 )
 
-const MessageBubble = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) => (
-    <div className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4`}>
-        <div className='flex flex-col gap-1 max-w-[65%]'>
-            {msg.isDeleted ? (
-                <div
-                    style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
-                    className='px-4 py-3 text-sm italic text-[#555] bg-[#1e1e1e]'
-                >
-                    Message deleted
-                </div>
-            ) : (
-                <div
-                    style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
-                    className={`px-4 py-3 text-sm leading-relaxed flex flex-col gap-2 ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
-                >
-                    {msg.attachments && msg.attachments.length > 0 && (
-                        <div className="flex flex-col gap-2">
-                            {msg.attachments.map((att, i) => (
-                                att.contentType.startsWith('image/') ? (
-                                    <img key={i} src={att.url} alt="attachment" className="max-w-full rounded bg-black/20" />
-                                ) : (
-                                    <a key={i} href={att.url} target="_blank" rel="noreferrer" className="underline text-sm break-all font-bold">
-                                        📄 Download File
-                                    </a>
-                                )
+const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, onReact }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; replyTarget?: ChatMessage; onReact: (emoji: string | null) => void }) => {
+    const reactions = msg.reactions || {};
+    const reactionCounts: Record<string, number> = {};
+    const myReaction = reactions[currentUserId];
+    let hasReactions = false;
+
+    Object.values(reactions).forEach(emoji => {
+        hasReactions = true;
+        reactionCounts[emoji] = (reactionCounts[emoji] || 0) + 1;
+    });
+
+    return (
+        <div className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4 group`}>
+            <div className={`flex flex-col gap-1 max-w-[65%] relative ${isMine ? 'items-end' : 'items-start'}`}>
+                <div className={`absolute top-2 ${isMine ? '-left-20' : '-right-20'} opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-[#252525] p-1 rounded-full shadow-lg border border-[#353535]`}>
+                    <button onClick={onReply} className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="Reply">
+                        <Reply size={14} />
+                    </button>
+                    <div className="flex gap-1 group/reactions relative">
+                        <button className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="React">
+                            <Smile size={14} />
+                        </button>
+                        <div className="hidden group-hover/reactions:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-[#252525] p-1.5 rounded-full shadow-xl border border-[#353535] gap-1.5 z-50">
+                            {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                                <button key={emoji} onClick={() => onReact(myReaction === emoji ? null : emoji)} className="hover:scale-125 transition-transform text-lg px-1.5">
+                                    {emoji}
+                                </button>
                             ))}
                         </div>
-                    )}
-                    {msg.content && <span>{msg.content}</span>}
+                    </div>
                 </div>
-            )}
-            <div className={`flex items-center gap-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
-                <span className='text-[10px] text-[#555]'>{formatTime(new Date(msg.createdAt))}</span>
-                {isMine && (
-                    msg.seenBy.length > 0
-                        ? <CheckCheck size={13} className='text-[#ff4d00]' />
-                        : <Check size={13} className='text-[#555]' />
+                {msg.isDeleted ? (
+                    <div
+                        style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
+                        className='px-4 py-3 text-sm italic text-[#555] bg-[#1e1e1e]'
+                    >
+                        Message deleted
+                    </div>
+                ) : (
+                    <div
+                        style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
+                        className={`px-4 py-3 text-sm leading-relaxed flex flex-col gap-2 ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
+                    >
+                        {replyTarget && (
+                            <div className={`text-xs p-2 mb-1 border-l-2 opacity-80 rounded-r ${isMine ? 'bg-black/20 border-white/50 text-white/90' : 'bg-black/40 border-[#ff4d00] text-gray-300'}`}>
+                                <div className="font-bold mb-0.5 opacity-70">Replying to</div>
+                                <div className="truncate">{replyTarget.content || 'Attachment'}</div>
+                            </div>
+                        )}
+                        {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                                {msg.attachments.map((att, i) => (
+                                    att.contentType.startsWith('image/') ? (
+                                        <img key={i} src={att.url} alt="attachment" className="max-w-full rounded bg-black/20" />
+                                    ) : (
+                                        <a key={i} href={att.url} target="_blank" rel="noreferrer" className="underline text-sm break-all font-bold">
+                                            📄 Download File
+                                        </a>
+                                    )
+                                ))}
+                            </div>
+                        )}
+                        {msg.content && <span>{msg.content}</span>}
+                    </div>
                 )}
+                
+                {hasReactions && (
+                    <div className={`flex flex-wrap gap-1 mt-0.5 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                        {Object.entries(reactionCounts).map(([emoji, count]) => (
+                            <button
+                                key={emoji}
+                                onClick={() => onReact(myReaction === emoji ? null : emoji)}
+                                className={`text-[11px] px-1.5 py-0.5 rounded-full flex items-center gap-1 border ${myReaction === emoji ? 'bg-[#ff4d00]/20 border-[#ff4d00]/50 text-[#ff4d00]' : 'bg-[#1c1c1c] border-[#353535] text-[#888] hover:bg-[#252525]'}`}
+                            >
+                                <span>{emoji}</span>
+                                {count > 1 && <span>{count}</span>}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                <div className={`flex items-center gap-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                    <span className='text-[10px] text-[#555]'>{formatTime(new Date(msg.createdAt))}</span>
+                    {isMine && (
+                        msg.seenBy.length > 0
+                            ? <CheckCheck size={13} className='text-[#34b7f1]' />
+                            : (msg.delivery?.deliveredAt 
+                                ? <CheckCheck size={13} className='text-[#888]' />
+                                : <Check size={13} className='text-[#888]' />)
+                    )}
+                </div>
             </div>
         </div>
-    </div>
-)
+    )
+}
 
 const TypingIndicator = () => (
     <div className='flex justify-start px-4'>
@@ -561,6 +614,7 @@ const ChatInner = () => {
     const [profiles, setProfiles] = useState<Record<string, UserProfile>>({})
     const [page, setPage] = useState(1)
     const [hasMore, setHasMore] = useState(true)
+    const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null)
 
     const bottomRef    = useRef<HTMLDivElement>(null)
     const textareaRef  = useRef<HTMLTextAreaElement>(null)
@@ -639,6 +693,7 @@ const ChatInner = () => {
         setPage(1)
         setHasMore(true)
         setMsgsLoading(true)
+        setReplyingTo(null)
 
         getMessages(roomId, 1, 50)
             .then(data => {
@@ -666,6 +721,12 @@ const ChatInner = () => {
                     markAsSeen(msg.roomId, msg._id)
                 }
             }
+            
+            // Deliver the message if it's not ours
+            if (msg.senderId !== user?.id) {
+                messageDelivered(msg.roomId, msg._id)
+            }
+
             // Bubble room to top of list
             setRooms(prev => {
                 const updated = prev.map(r => r._id === msg.roomId ? { ...r, updatedAt: msg.createdAt, lastMessageRecord: msg } : r)
@@ -698,6 +759,14 @@ const ChatInner = () => {
             }))
         }
 
+        const onMessageReacted = (updated: ChatMessage) => {
+            setMessages(prev => prev.map(m => m._id === updated._id ? updated : m))
+        }
+
+        const onMessageStatusUpdated = (updated: ChatMessage) => {
+            setMessages(prev => prev.map(m => m._id === updated._id ? updated : m))
+        }
+
         const onError = (error: { event: string, message: string }) => {
             toast.error(`Error: ${error.message}`);
         }
@@ -707,6 +776,8 @@ const ChatInner = () => {
         socket.on('userStoppedTyping', onStopTyping)
         socket.on('messageEdited', onMessageEdited)
         socket.on('messageDeleted', onMessageDeleted)
+        socket.on('messageReacted', onMessageReacted)
+        socket.on('messageStatusUpdated', onMessageStatusUpdated)
         socket.on('messageSeen', onSeen)
         socket.on('error', onError)
 
@@ -716,6 +787,8 @@ const ChatInner = () => {
             socket.off('userStoppedTyping', onStopTyping)
             socket.off('messageEdited', onMessageEdited)
             socket.off('messageDeleted', onMessageDeleted)
+            socket.off('messageReacted', onMessageReacted)
+            socket.off('messageStatusUpdated', onMessageStatusUpdated)
             socket.off('messageSeen', onSeen)
             socket.off('error', onError)
         }
@@ -740,13 +813,14 @@ const ChatInner = () => {
     const sendMessageHandler = useCallback(() => {
         const text = input.trim()
         if (!text || !activeRoom) return
-        socketSend({ roomId: activeRoom._id, content: text })
+        socketSend({ roomId: activeRoom._id, content: text, replyTo: replyingTo?._id })
         setInput('')
         setShowEmojiPicker(false)
+        setReplyingTo(null)
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         if (typingTimer.current) clearTimeout(typingTimer.current)
         emitStopTyping(activeRoom._id)
-    }, [input, activeRoom])
+    }, [input, activeRoom, replyingTo])
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessageHandler() }
@@ -763,8 +837,10 @@ const ChatInner = () => {
             socketSend({
                 roomId: activeRoom._id,
                 content: '',
-                attachments: [{ url: res.url, contentType: file.type, fileSize: file.size }]
+                attachments: [{ url: res.url, contentType: file.type, fileSize: file.size }],
+                replyTo: replyingTo?._id
             })
+            setReplyingTo(null)
         } catch (err: any) {
             const msg = err?.response?.data?.message || err.message || "Unknown error";
             toast.error("Failed to upload file: " + msg)
@@ -943,7 +1019,24 @@ const ChatInner = () => {
                                             ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message')
                                             : (activeRoom.name ?? 'Group Chat')}
                                     </p>
-                                    <p className='text-[#666] text-xs'>{activeRoom.members.length} members</p>
+                                    {activeRoom.kind === 'dm' ? (
+                                        <p className='text-[#666] text-xs mt-0.5'>
+                                            {(() => {
+                                                const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+                                                const otherProfile = otherId ? profiles[otherId] : null;
+                                                if (!otherProfile) return 'Loading...';
+                                                if (otherProfile.isOnline) return <span className="text-[#34b7f1] font-bold">Online</span>;
+                                                if (otherProfile.last_seen) {
+                                                    return `last seen ${new Date(otherProfile.last_seen).toLocaleString(undefined, {
+                                                        hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric'
+                                                    })}`;
+                                                }
+                                                return 'Offline';
+                                            })()}
+                                        </p>
+                                    ) : (
+                                        <p className='text-[#666] text-xs mt-0.5'>{activeRoom.members.length} members</p>
+                                    )}
                                 </div>
                             </div>
 
@@ -960,7 +1053,17 @@ const ChatInner = () => {
                                             <React.Fragment key={group.date}>
                                                 <DateSeparator label={group.date} />
                                                 {group.msgs.map(msg => (
-                                                    <MessageBubble key={msg._id} msg={msg} isMine={msg.senderId === currentUserId} />
+                                                    <MessageBubble 
+                                                        key={msg._id} 
+                                                        msg={msg} 
+                                                        isMine={msg.senderId === currentUserId} 
+                                                        currentUserId={currentUserId}
+                                                        onReply={() => setReplyingTo(msg)}
+                                                        replyTarget={msg.replyTo ? messages.find(m => m._id === msg.replyTo) : undefined}
+                                                        onReact={(emoji) => {
+                                                            if (activeRoom) reactToMessage(activeRoom._id, msg._id, emoji)
+                                                        }}
+                                                    />
                                                 ))}
                                             </React.Fragment>
                                         ))}
@@ -971,7 +1074,18 @@ const ChatInner = () => {
                             </div>
 
                             {/* Input bar */}
-                            <div className='flex-shrink-0 px-4 py-3 bg-[#1c1c1c] border-t-2 border-[#2a2a2a] flex items-end gap-3 relative' ref={emojiPickerRef}>
+                            {replyingTo && (
+                                <div className="flex-shrink-0 bg-[#1c1c1c] border-t-2 border-[#2a2a2a] px-4 pt-3 pb-0 flex items-center justify-between">
+                                    <div className="flex flex-col border-l-4 border-[#ff4d00] pl-3 text-sm flex-1 mr-4 overflow-hidden">
+                                        <span className="text-[#ff4d00] font-bold text-xs mb-0.5">Replying to {replyingTo.senderId === currentUserId ? 'yourself' : profiles[replyingTo.senderId]?.displayName || 'someone'}</span>
+                                        <span className="text-[#888] truncate w-full">{replyingTo.content || 'Attachment'}</span>
+                                    </div>
+                                    <button onClick={() => setReplyingTo(null)} className="text-[#888] hover:text-[#ff4d00] bg-[#252525] rounded-full p-1 transition-colors">
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                            )}
+                            <div className={`flex-shrink-0 px-4 py-3 bg-[#1c1c1c] ${replyingTo ? '' : 'border-t-2 border-[#2a2a2a]'} flex items-end gap-3 relative`} ref={emojiPickerRef}>
                                 {showEmojiPicker && (
                                     <div className="absolute bottom-full left-4 mb-2 z-50 shadow-2xl">
                                         <EmojiPicker 

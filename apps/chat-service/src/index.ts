@@ -6,6 +6,7 @@ import { env } from './config/env';
 import chatRouter from './routes/chat.routes';
 import logger from './config/logger';
 import { metrics } from './config/metrics';
+import { initBroker } from './config/broker';
 const app = express();
 
 app.use(express.json());
@@ -26,6 +27,10 @@ const startup = async () => {
         try {
             await mongoose.connect(env.mongoUri);
             logger.info('Connected to MongoDB');
+            const redis = (await import('./config/redis')).default;
+            await redis.connect();
+            logger.info('Connected to Redis');
+            await initBroker();
             httpServer.listen(env.port, () => {
                 logger.info(`Chat service is running on port ${env.port}`);
             });

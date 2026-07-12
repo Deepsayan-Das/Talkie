@@ -3,6 +3,8 @@ import { Server as HttpServer } from "http";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import * as ChatService from "../services/chat.service";
 import logger from "../config/logger";
+import redis from "../config/redis";
+import { broker } from "../config/broker";
 
 export const initSocketHandler = (httpServer: HttpServer) => {
     const io = new Server(httpServer, {
@@ -12,12 +14,20 @@ export const initSocketHandler = (httpServer: HttpServer) => {
     io.use(async (socket, next) => {
         try {
             const token = socket.handshake.auth.token?.split(' ')[1];
+            const deviceId = socket.handshake.auth.deviceId;
+
             if (!token) {
                 logger.warn('Socket connection rejected — no token provided', { socketId: socket.id });
                 return next(new Error("Unauthorized"));
             }
+            if (!deviceId) {
+                logger.warn('Socket connection rejected — no deviceId provided', { socketId: socket.id });
+                return next(new Error("Unauthorized: Missing deviceId"));
+            }
+
             const payload = jwt.verify(token, process.env.JWT_SECRET!);
             socket.data.userId = (payload as JwtPayload).userId || (payload as JwtPayload).id;
+            socket.data.deviceId = deviceId;
             next();
         } catch {
             logger.warn('Socket connection rejected — invalid or expired token', { socketId: socket.id });
@@ -25,8 +35,10 @@ export const initSocketHandler = (httpServer: HttpServer) => {
         }
     });
 
-    io.on('connection', (socket: Socket) => {
-        logger.info('Socket connection established', { socketId: socket.id, userId: socket.data.userId });
+    io.on('connection', async (socket: Socket) => {
+        await redis.sadd(`presence:${socket.data.userId}`, socket.data.deviceId);
+        await redis.sadd(`device-sockets:${socket.data.userId}:${socket.data.deviceId}`, socket.id);
+        logger.info('Socket connection established', { socketId: socket.id, userId: socket.data.userId, deviceId: socket.data.deviceId });
 
         socket.on('joinRoom', async (roomId: string) => {
             socket.join(roomId);  // joins the Socket.IO room channel
@@ -133,6 +145,50 @@ export const initSocketHandler = (httpServer: HttpServer) => {
             }
         });
 
+        // ── messageDelivered ─────────────────────────────────────────────────────
+        socket.on('messageDelivered', async (data: {
+            roomId: string;
+            messageId: string;
+        }) => {
+            try {
+                const updated = await ChatService.messageDelivered(
+                    data.roomId,
+                    data.messageId,
+                    socket.data.userId,
+                    socket.data.deviceId
+                );
+                if (updated) {
+                    io.to(data.roomId).emit('messageStatusUpdated', updated);
+                    logger.info('Message delivered successfully', { userId: socket.data.userId, messageId: data.messageId, deviceId: socket.data.deviceId });
+                }
+            } catch (err: any) {
+                logger.error('messageDelivered failed', { userId: socket.data.userId, messageId: data.messageId, error: err.message });
+                socket.emit('error', { event: 'messageDelivered', message: err.message });
+            }
+        });
+
+        // ── reactToMessage ───────────────────────────────────────────────────────
+        socket.on('reactToMessage', async (data: {
+            roomId: string;
+            messageId: string;
+            reaction: string;
+        }) => {
+            try {
+                logger.info('Reacting to message', { userId: socket.data.userId, roomId: data.roomId, messageId: data.messageId, reaction: data.reaction });
+                const updated = await ChatService.reactToMessage(
+                    data.roomId,
+                    data.messageId,
+                    socket.data.userId,
+                    data.reaction
+                );
+                io.to(data.roomId).emit('messageReacted', updated);
+                logger.info('Message reacted successfully', { userId: socket.data.userId, messageId: data.messageId });
+            } catch (err: any) {
+                logger.error('reactToMessage failed', { userId: socket.data.userId, messageId: data.messageId, error: err.message });
+                socket.emit('error', { event: 'reactToMessage', message: err.message });
+            }
+        });
+
         // ── typing ───────────────────────────────────────────────────────────────
         // Client emits : { roomId }
         // Server emits : 'userTyping' → everyone in room EXCEPT the sender
@@ -147,7 +203,16 @@ export const initSocketHandler = (httpServer: HttpServer) => {
             socket.to(data.roomId).emit('userStoppedTyping', { userId: socket.data.userId });
         });
 
-        socket.on('disconnect', () => {
+        socket.on('disconnect', async () => {
+            await redis.srem(`presence:${socket.data.userId}`, socket.data.deviceId);
+            const remaining = await redis.srem(`device-sockets:${socket.data.userId}:${socket.data.deviceId}`, socket.id);
+            if (remaining === 0) {
+                redis.srem(`active-rooms:${socket.data.userId}`, socket.data.roomId);
+                await redis.del(`device-sockets:${socket.data.userId}:${socket.data.deviceId}`);
+                if (broker) {
+                    await broker.publish('chat.user.offline', { userId: socket.data.userId, timestamp: new Date() });
+                }
+            }
             logger.info('Socket connection terminated', { socketId: socket.id, userId: socket.data.userId });
         });
     });

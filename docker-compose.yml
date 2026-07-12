@@ -8,6 +8,7 @@ volumes:
   minio-data:
   prometheus-data:
   grafana-data:
+  rabbitmq-data:
 services:
   postgres:
     image: postgres:17
@@ -104,3 +105,21 @@ services:
       - talkie-net
     depends_on:
       - prometheus
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_c
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - talkie-net
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq

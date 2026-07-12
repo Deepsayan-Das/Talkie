@@ -7,6 +7,7 @@ import { blacklistToken } from '../utils/tokenBlacklist';
 import redis from '../config/redis';
 import logger from '../config/logger';
 
+import { broker } from '../config/broker';
 
 export const sendVerificationMail = async (user: any, email: string) => {
     const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -18,10 +19,18 @@ export const sendVerificationMail = async (user: any, email: string) => {
     const verificationUrl = `${env.client_url}/verify-email?token=${verificationToken}`;
 
     logger.info('Publishing verification email event', { email });
-    await redis.publish('auth.user.registered', JSON.stringify({
-        email,
-        verificationLink: verificationUrl
-    }));
+    if (broker) {
+        await broker.publish('auth.user.registered', {
+            email,
+            verificationLink: verificationUrl
+        });
+    } else {
+        logger.warn('Broker not initialized, fallback to redis');
+        await redis.publish('auth.user.registered', JSON.stringify({
+            email,
+            verificationLink: verificationUrl
+        }));
+    }
     logger.info('Verification email event published', { email });
 }
 

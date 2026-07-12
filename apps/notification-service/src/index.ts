@@ -20,6 +20,10 @@ const bootstrap = async () => {
             await redis.connect();
             logger.info('[Redis] Connected');
 
+            // 2.5 Initialize Broker
+            const { initBroker } = await import('./config/broker');
+            await initBroker();
+
             // 3. Start subscriber (listens for auth events)
             await initAuthSubscriber();
             logger.info('[Subscriber] Auth subscriber ready');

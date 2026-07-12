@@ -1,5 +1,6 @@
 import * as RoomRepository from "../repositories/room.repository";
 import * as MessageRepository from "../repositories/message.repository";
+import redis from "../config/redis";
 
 export const createRoom = async (requesterId: string, members: string[], kind?: "dm" | "group", name?: string, avatar?: string) => {
     const membersToInclude = [...new Set([requesterId, ...members])]
@@ -164,7 +165,16 @@ export const sendMessage = async (roomId: string, userId: string, content: strin
     if (!user) {
         throw new Error("user not the memeber of the group");
     }
-    const message = await MessageRepository.createMessage(roomId, userId, content, attachments || []);
+
+    let targetDevices: string[] = [];
+    if (room.kind === 'dm') {
+        const recipient = room.members.find((member) => member.userId !== userId);
+        if (recipient) {
+            targetDevices = await redis.smembers(`presence:${recipient.userId}`);
+        }
+    }
+
+    const message = await MessageRepository.createMessage(roomId, userId, content, attachments || [], targetDevices);
     return message;
 }
 
@@ -223,3 +233,55 @@ export const markMessageAsSeen = async (roomId: string, messageId: string, userI
     await MessageRepository.markAsSeen(messageId, userId);
 }
 
+function isValidReaction(reaction: string | null): boolean {
+    if (!reaction) return false;
+    // 1. Break the string into visible characters (graphemes)
+    const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+    const segments = [...segmenter.segment(reaction)];
+
+    // 2. Fail if there isn't exactly one visible character
+    if (segments.length !== 1) return false;
+
+    // 3. Verify that the single character is an emoji
+    const singleChar = segments[0].segment;
+    return /^\p{Extended_Pictographic}$/u.test(singleChar);
+}
+
+export const reactToMessage = async (roomId: string, messageId: string, userId: string, reaction: string) => {
+    if (!isValidReaction(reaction)) {
+        throw new Error("Invalid reaction");
+    }
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) {
+        throw new Error("Room not found");
+    }
+    const user = room.members.find((member) => member.userId === userId);
+    if (!user) {
+        throw new Error("user not the member of the group");
+    }
+
+    const message = await MessageRepository.findMessageById(messageId);
+    if (!message) {
+        throw new Error("Message not found");
+    }
+    const oldRxn = message.reactions?.get(userId);
+    if (oldRxn && reaction === oldRxn) {
+        return await MessageRepository.removeReaction(messageId, userId);
+    } else if (reaction) {
+        return await MessageRepository.addReaction(messageId, userId, reaction);
+    }
+
+    return message;
+}
+
+export const messageDelivered = async (roomId: string, messageId: string, userId: string, deviceId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) {
+        throw new Error("Room not found");
+    }
+    const user = room.members.find((member) => member.userId === userId);
+    if (!user) {
+        throw new Error("user not the member of the group");
+    }
+    return await MessageRepository.recordDelivery(messageId, deviceId);
+}

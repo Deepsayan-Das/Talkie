@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { acceptBuddyReq, blockUser, getAllRelationsService, getUserProfile, rejectBuddyReq, searchUser, sendBuddyReq, unblockUser, updateUserProfile } from "../services/user.services";
 import logger from "../config/logger";
+import redis from "../config/redis";
 
 /** Maps a raw DB profile row to the shape the frontend expects */
 const toPublicProfile = (user: any) => ({
@@ -193,7 +194,12 @@ export const getUserProfileController = async (req: Request, res: Response) => {
 
     try {
         const user = await getUserProfile(userId as string);
-        res.status(200).json({ success: true, data: toPublicProfile(user) });
+        const publicProfile = toPublicProfile(user);
+        
+        const isOnline = (await redis.scard(`presence:${user.user_id}`)) > 0;
+        publicProfile.isOnline = isOnline;
+
+        res.status(200).json({ success: true, data: publicProfile });
     } catch (error: any) {
         if (error.message === "user not found!") {
             return res.status(404).json({ success: false, message: error.message });

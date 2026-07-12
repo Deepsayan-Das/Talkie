@@ -6,13 +6,19 @@ let socket: Socket | null = null
 
 // ─── Get or create a socket connected with the given accessToken ──────────────
 export function getSocket(accessToken: string): Socket {
+    let deviceId = typeof window !== 'undefined' ? localStorage.getItem('deviceId') : null;
+    if (!deviceId && typeof window !== 'undefined') {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem('deviceId', deviceId);
+    }
+
     if (socket) {
-        socket.auth = { token: `Bearer ${accessToken}` };
+        socket.auth = { token: `Bearer ${accessToken}`, deviceId };
         return socket;
     }
 
     socket = io(SOCKET_URL, {
-        auth: { token: `Bearer ${accessToken}` },
+        auth: { token: `Bearer ${accessToken}`, deviceId },
         transports: ['websocket'],
         autoConnect: true,
         reconnection: true,
@@ -43,6 +49,7 @@ export function sendMessage(payload: {
     roomId: string
     content: string
     attachments?: { url: string; contentType: string; fileSize: number }[]
+    replyTo?: string
 }): void {
     socket?.emit('sendMessage', payload)
 }
@@ -57,4 +64,12 @@ export function emitStopTyping(roomId: string): void {
 
 export function markAsSeen(roomId: string, messageId: string): void {
     socket?.emit('markAsSeen', { roomId, messageId })
+}
+
+export function reactToMessage(roomId: string, messageId: string, reaction: string | null): void {
+    socket?.emit('reactToMessage', { roomId, messageId, reaction })
+}
+
+export function messageDelivered(roomId: string, messageId: string): void {
+    socket?.emit('messageDelivered', { roomId, messageId })
 }

@@ -13,7 +13,7 @@ const messageSchema = new mongoose.Schema({
     },
     content: {
         type: String,
-        required: function() {
+        required: function () {
             // @ts-ignore
             return !this.attachments || this.attachments.length === 0;
         }
@@ -53,9 +53,21 @@ const messageSchema = new mongoose.Schema({
     isDeleted: {
         type: Boolean,
         default: false
+    },
+    isSystemMessage: {
+        type: Boolean,
+        default: false
+    },
+    reactions: {
+        type: Map,
+        of: String,
+        default: {}
+    },
+    delivery: {
+        targetDevices: { type: [String], default: [] },
+        deliveredDevices: { type: [String], default: [] },
+        deliveredAt: { type: Date, default: null }
     }
-
-
 }, { timestamps: true });
 
 export const Message = mongoose.model("messages", messageSchema);

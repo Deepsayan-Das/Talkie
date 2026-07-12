@@ -16,11 +16,12 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@talkie/shared-utils": "*",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "ioredis": "^5.11.1",
     "knex": "^3.2.10",
-    "pg": "^8.22.0",
-    "@talkie/shared-utils": "*"
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
@@ -40,7 +41,11 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "roots": ["<rootDir>/src"],
-    "testMatch": ["**/__tests__/**/*.test.ts"]
+    "roots": [
+      "<rootDir>/src"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ]
   }
 }

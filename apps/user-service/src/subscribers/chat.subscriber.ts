@@ -1,30 +1,30 @@
 import { broker } from '../config/broker';
-import { sendVerificationMail } from '../handlers/email.handler';
+import { updateLastSeen } from '../repositories/user.repository';
 import logger from '../config/logger';
 
 const MAX_RETRIES = 5;
 
-export const initAuthSubscriber = async () => {
+export const initChatSubscriber = async () => {
     if (!broker) {
         logger.error('Broker not initialized');
         return;
     }
 
-    const queueName = 'notification.auth.events';
-    const routingKeys = ['auth.user.registered', 'auth.verification.resend'];
+    const queueName = 'user.presence.events';
+    const routingKeys = ['chat.user.offline'];
 
     await broker.consume(queueName, routingKeys, async (payload: any, ack: () => void, nack: () => void) => {
         let success = false;
         let attempt = 0;
         while (attempt < MAX_RETRIES && !success) {
             try {
-                logger.info('Handling auth event', { email: payload.email });
-                await sendVerificationMail(payload.email, payload.verificationLink);
+                logger.info('Handling chat presence event', { userId: payload.userId });
+                await updateLastSeen(payload.userId, new Date(payload.timestamp));
                 success = true;
                 ack();
             } catch (err: any) {
                 attempt++;
-                logger.warn('Failed to process auth event Retrying... attempt: ' + attempt, { error: err.message });
+                logger.warn('Failed to process chat presence event Retrying... attempt: ' + attempt, { error: err.message });
                 if (attempt < MAX_RETRIES) {
                     await new Promise((r) => { setTimeout(r, attempt * 1000) })
                 }
@@ -33,7 +33,7 @@ export const initAuthSubscriber = async () => {
         if (success) {
             ack();
         } else {
-            logger.error('Max retries exhausted, dropping event', { email: payload.email });
+            logger.error('Max retries exhausted, dropping event', { userId: payload.userId });
             nack();
         }
 
