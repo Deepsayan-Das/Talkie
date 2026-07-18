@@ -14,6 +14,7 @@ import { useSocket } from '@/context/SocketContext'
 import { getUserProfile, getAllRelations, uploadFile } from '@/lib/user'
 import { getRooms, getMessages, createRoom, updateGroupInfo, removeMember, promoteMember, demoteMember } from '@/lib/chat'
 import { joinRoom, leaveRoom, sendMessage as socketSend, emitTyping, emitStopTyping, markAsSeen, reactToMessage, messageDelivered } from '@/lib/socket'
+import { decryptIncomingMessage } from '@/lib/crypto/messaging'
 import type { Room, ChatMessage } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
 
@@ -68,7 +69,9 @@ const DateSeparator = ({ label }: { label: string }) => (
     </div>
 )
 
-const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, onReact }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; replyTarget?: ChatMessage; onReact: (emoji: string | null) => void }) => {
+const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, replyTargetName, onReact, onReplyClick }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; replyTarget?: ChatMessage; replyTargetName?: string; onReact: (emoji: string | null) => void; onReplyClick?: (msgId: string) => void }) => {
+    const [showReactions, setShowReactions] = useState(false);
+    const reactionsRef = useRef<HTMLDivElement>(null);
     const reactions = msg.reactions || {};
     const reactionCounts: Record<string, number> = {};
     const myReaction = reactions[currentUserId];
@@ -79,24 +82,36 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, onRea
         reactionCounts[emoji] = (reactionCounts[emoji] || 0) + 1;
     });
 
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (reactionsRef.current && !reactionsRef.current.contains(e.target as Node)) {
+                setShowReactions(false);
+            }
+        };
+        if (showReactions) document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showReactions]);
+
     return (
-        <div className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4 group`}>
+        <div id={`message-${msg._id}`} className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4 py-1 group transition-colors duration-500`}>
             <div className={`flex flex-col gap-1 max-w-[65%] relative ${isMine ? 'items-end' : 'items-start'}`}>
-                <div className={`absolute top-2 ${isMine ? '-left-20' : '-right-20'} opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-[#252525] p-1 rounded-full shadow-lg border border-[#353535]`}>
+                <div className={`absolute top-2 ${isMine ? '-left-20' : '-right-20'} opacity-0 group-hover:opacity-100 ${showReactions ? 'opacity-100' : ''} transition-opacity z-10 flex gap-1 bg-[#252525] p-1 rounded-full shadow-lg border border-[#353535]`}>
                     <button onClick={onReply} className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="Reply">
                         <Reply size={14} />
                     </button>
-                    <div className="flex gap-1 group/reactions relative">
-                        <button className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="React">
+                    <div className="flex gap-1 relative" ref={reactionsRef}>
+                        <button onClick={() => setShowReactions(!showReactions)} className={`p-1.5 rounded-full hover:bg-[#ff4d00] ${showReactions ? 'text-white bg-[#ff4d00]' : 'text-[#888] hover:text-white'}`} title="React">
                             <Smile size={14} />
                         </button>
-                        <div className="hidden group-hover/reactions:flex absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-[#252525] p-1.5 rounded-full shadow-xl border border-[#353535] gap-1.5 z-50">
-                            {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
-                                <button key={emoji} onClick={() => onReact(myReaction === emoji ? null : emoji)} className="hover:scale-125 transition-transform text-lg px-1.5">
-                                    {emoji}
-                                </button>
-                            ))}
-                        </div>
+                        {showReactions && (
+                            <div className="flex absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-[#252525] p-1.5 rounded-full shadow-xl border border-[#353535] gap-1.5 z-[100]">
+                                {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                                    <button key={emoji} onClick={() => { onReact(myReaction === emoji ? null : emoji); setShowReactions(false); }} className="hover:scale-125 transition-transform text-lg px-1.5">
+                                        {emoji}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
                 {msg.isDeleted ? (
@@ -112,9 +127,20 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, onRea
                         className={`px-4 py-3 text-sm leading-relaxed flex flex-col gap-2 ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
                     >
                         {replyTarget && (
-                            <div className={`text-xs p-2 mb-1 border-l-2 opacity-80 rounded-r ${isMine ? 'bg-black/20 border-white/50 text-white/90' : 'bg-black/40 border-[#ff4d00] text-gray-300'}`}>
-                                <div className="font-bold mb-0.5 opacity-70">Replying to</div>
-                                <div className="truncate">{replyTarget.content || 'Attachment'}</div>
+                            <div 
+                                onClick={() => onReplyClick && onReplyClick(replyTarget._id)}
+                                className={`flex flex-col border-l-4 pl-3 py-1 mb-2 rounded-r cursor-pointer transition-colors ${
+                                    isMine 
+                                        ? 'border-white/70 bg-black/20 hover:bg-black/30' 
+                                        : 'border-[#ff4d00] bg-black/20 hover:bg-black/30'
+                                }`}
+                            >
+                                <span className={`font-bold text-xs mb-0.5 ${isMine ? 'text-white/90' : 'text-[#ff4d00]'}`}>
+                                    Replying to {replyTargetName || 'someone'}
+                                </span>
+                                <span className={`text-xs truncate w-full ${isMine ? 'text-white/80' : 'text-[#aaa]'}`}>
+                                    {replyTarget.content || 'Attachment'}
+                                </span>
                             </div>
                         )}
                         {msg.attachments && msg.attachments.length > 0 && (
@@ -600,6 +626,7 @@ const ChatInner = () => {
     const searchParams = useSearchParams()
     const { user } = useAuth()
     const { socket } = useSocket()
+    const currentUserId = user?.id ?? ''
 
     const [rooms, setRooms] = useState<Room[]>([])
     const [activeRoom, setActiveRoom] = useState<Room | null>(null)
@@ -623,6 +650,7 @@ const ChatInner = () => {
     const emojiPickerRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [uploadingFile, setUploadingFile] = useState(false)
+    const [hasPendingRequests, setHasPendingRequests] = useState(false)
 
     // ── Click outside emoji picker ────────────────────────────────────────────
     useEffect(() => {
@@ -638,6 +666,19 @@ const ChatInner = () => {
             document.removeEventListener('mousedown', handleClickOutside)
         }
     }, [showEmojiPicker])
+
+    // ── Check for pending buddy requests ───────────────────────────────────────
+    useEffect(() => {
+        if (!user) return
+        getAllRelations()
+            .then(relations => {
+                const incoming = relations.filter(
+                    r => r.status === 'pending' && r.receiver_id === user.id
+                )
+                setHasPendingRequests(incoming.length > 0)
+            })
+            .catch(() => { /* silently ignore */ })
+    }, [user])
 
     // ── Load rooms on mount ───────────────────────────────────────────────────
     useEffect(() => {
@@ -696,8 +737,9 @@ const ChatInner = () => {
         setReplyingTo(null)
 
         getMessages(roomId, 1, 50)
-            .then(data => {
-                setMessages(data.reverse())
+            .then(async data => {
+                const decrypted = await Promise.all(data.map(m => decryptIncomingMessage(m)))
+                setMessages(decrypted.reverse())
                 setHasMore(data.length === 50)
             })
             .catch(() => toast.error('Could not load messages'))
@@ -713,9 +755,10 @@ const ChatInner = () => {
     useEffect(() => {
         if (!socket) return
 
-        const onMessage = (msg: ChatMessage) => {
+        const onMessage = async (msg: ChatMessage) => {
             if (msg.roomId === activeRoom?._id) {
-                setMessages(prev => [...prev, msg])
+                const decryptedMsg = await decryptIncomingMessage(msg)
+                setMessages(prev => [...prev, decryptedMsg])
                 // Mark as seen if the message is not ours
                 if (msg.senderId !== user?.id) {
                     markAsSeen(msg.roomId, msg._id)
@@ -813,14 +856,19 @@ const ChatInner = () => {
     const sendMessageHandler = useCallback(() => {
         const text = input.trim()
         if (!text || !activeRoom) return
-        socketSend({ roomId: activeRoom._id, content: text, replyTo: replyingTo?._id })
+        const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId
+        if (!recipientUserId) {
+            toast.error("Cannot send E2EE message: recipient not found")
+            return
+        }
+        socketSend({ recipientUserId, senderUserId: currentUserId, roomId: activeRoom._id, content: text, replyTo: replyingTo?._id })
         setInput('')
         setShowEmojiPicker(false)
         setReplyingTo(null)
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         if (typingTimer.current) clearTimeout(typingTimer.current)
         emitStopTyping(activeRoom._id)
-    }, [input, activeRoom, replyingTo])
+    }, [input, activeRoom, replyingTo, currentUserId])
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessageHandler() }
@@ -830,11 +878,18 @@ const ChatInner = () => {
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file || !activeRoom) return
+        const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId
+        if (!recipientUserId) {
+            toast.error("Cannot upload: recipient not found")
+            return
+        }
         
         setUploadingFile(true)
         try {
             const res = await uploadFile(file)
             socketSend({
+                recipientUserId,
+                senderUserId: currentUserId,
                 roomId: activeRoom._id,
                 content: '',
                 attachments: [{ url: res.url, contentType: file.type, fileSize: file.size }],
@@ -858,7 +913,8 @@ const ChatInner = () => {
             setMsgsLoading(true)
             try {
                 const older = await getMessages(activeRoom._id, nextPage, 50)
-                setMessages(prev => [...older.reverse(), ...prev])
+                const decryptedOlder = await Promise.all(older.map(m => decryptIncomingMessage(m)))
+                setMessages(prev => [...decryptedOlder.reverse(), ...prev])
                 setPage(nextPage)
                 setHasMore(older.length === 50)
             } catch {
@@ -870,7 +926,6 @@ const ChatInner = () => {
     }, [activeRoom, hasMore, msgsLoading, page])
 
     const grouped = groupByDate(messages)
-    const currentUserId = user?.id ?? ''
 
     const handleResendVerification = async () => {
         try {
@@ -880,6 +935,17 @@ const ChatInner = () => {
             toast.error(err.response?.data?.message ?? 'Could not resend email')
         }
     }
+
+    const handleReplyClick = useCallback((msgId: string) => {
+        const el = document.getElementById(`message-${msgId}`);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('bg-[#ff4d00]/20');
+            setTimeout(() => el.classList.remove('bg-[#ff4d00]/20'), 1500);
+        } else {
+            toast.error("Message not found (might be too old)");
+        }
+    }, []);
 
     const handleCreateGroupSubmit = async (groupName: string, members: string[]) => {
         try {
@@ -950,8 +1016,11 @@ const ChatInner = () => {
                                 <span onClick={() => setIsCreateGroupOpen(true)} title="Create Group" className='hover:text-[#ff4d00] cursor-pointer transition-colors'>
                                     <Users size={18} />
                                 </span>
-                                <span onClick={() => router.push('/buddies')} title="New Conversation" className='hover:text-[#ff4d00] cursor-pointer transition-colors'>
+                                <span onClick={() => router.push('/buddies')} title="Buddies" className='relative hover:text-[#ff4d00] cursor-pointer transition-colors'>
                                     <SquarePen size={18} />
+                                    {hasPendingRequests && (
+                                        <span className='absolute -top-1.5 -right-1.5 w-3 h-3 bg-orange-500 rounded-full border-2 border-[#252525] animate-pulse' />
+                                    )}
                                 </span>
                             </div>
                         </div>
@@ -1052,19 +1121,27 @@ const ChatInner = () => {
                                         {grouped.map(group => (
                                             <React.Fragment key={group.date}>
                                                 <DateSeparator label={group.date} />
-                                                {group.msgs.map(msg => (
+                                                {group.msgs.map(msg => {
+                                                    let targetMsg = msg.replyTo ? messages.find(m => m._id === msg.replyTo) : undefined;
+                                                    if (msg.replyTo && !targetMsg) {
+                                                        targetMsg = { _id: msg.replyTo, content: "Original message...", senderId: "" } as any;
+                                                    }
+                                                    const targetName = targetMsg ? (targetMsg.senderId === currentUserId ? 'yourself' : (targetMsg.senderId ? profiles[targetMsg.senderId]?.displayName || 'someone' : 'someone')) : undefined;
+                                                    return (
                                                     <MessageBubble 
                                                         key={msg._id} 
                                                         msg={msg} 
                                                         isMine={msg.senderId === currentUserId} 
                                                         currentUserId={currentUserId}
                                                         onReply={() => setReplyingTo(msg)}
-                                                        replyTarget={msg.replyTo ? messages.find(m => m._id === msg.replyTo) : undefined}
+                                                        replyTarget={targetMsg}
+                                                        replyTargetName={targetName}
                                                         onReact={(emoji) => {
                                                             if (activeRoom) reactToMessage(activeRoom._id, msg._id, emoji)
                                                         }}
+                                                        onReplyClick={handleReplyClick}
                                                     />
-                                                ))}
+                                                )})}
                                             </React.Fragment>
                                         ))}
                                         {isTyping && <TypingIndicator />}

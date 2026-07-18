@@ -60,5 +60,12 @@ export const services: ServiceConfig[] = [
         target: env.notification_service_url,
         pathRewrite: { '^/': '/notification/' },
         publicPaths: []
+    },
+    // ── Key service ────────────────────────────────────────────────────────
+    {
+        mountPrefix: '/keys',
+        target: env.key_service_url,
+        pathRewrite: { '^/': '/keys/' },
+        publicPaths: []
     }
 ];

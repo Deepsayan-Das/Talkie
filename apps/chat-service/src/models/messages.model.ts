@@ -9,14 +9,32 @@ const messageSchema = new mongoose.Schema({
     senderId: {
         type: String,
         required: true
-
+    },
+    senderDeviceId: {
+        type: String,
+        required: true
     },
     content: {
         type: String,
-        required: function () {
-            // @ts-ignore
-            return !this.attachments || this.attachments.length === 0;
-        }
+        required: false
+    },
+    deviceCiphertexts: {
+        type: Map,
+        of: {
+            ciphertext: { type: String, required: true },
+            nonce: { type: String, required: true },
+            messageIndex: { type: Number, required: true },
+            myRatchetPub: { type: String, required: true },
+            x3dhInit: {
+                type: {
+                    identityPublicKey: { type: String, required: true },
+                    ephemeralPublicKey: { type: String, required: true },
+                    usedOneTimePrekeyId: { type: Number, default: null }
+                },
+                default: null
+            }
+        },
+        default: {}
     },
     attachments: {
         type: [
@@ -67,6 +85,14 @@ const messageSchema = new mongoose.Schema({
         targetDevices: { type: [String], default: [] },
         deliveredDevices: { type: [String], default: [] },
         deliveredAt: { type: Date, default: null }
+    },
+    x3dhInit: {
+        type: {
+            identityPublicKey: { type: String, required: true },
+            ephemeralPublicKey: { type: String, required: true },
+            usedOneTimePrekeyId: { type: Number, default: null }
+        },
+        default: null
     }
 }, { timestamps: true });
 

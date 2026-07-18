@@ -1,11 +1,23 @@
 import { Message } from "../models/messages.model";
 
-export const createMessage = async (roomId: string, senderId: string, content: string, attachments: { url: string, contentType: string, fileSize: number }[], targetDevices: string[] = []) => {
+export const createMessage = async (
+    roomId: string,
+    senderId: string,
+    senderDeviceId: string,
+    content: string | undefined,
+    deviceCiphertexts: Record<string, any> | undefined,
+    attachments: { url: string, contentType: string, fileSize: number }[],
+    targetDevices: string[] = [],
+    replyTo?: string
+) => {
     return await Message.create({
         roomId,
         senderId,
+        senderDeviceId,
         content,
+        deviceCiphertexts,
         attachments,
+        replyTo,
         delivery: {
             targetDevices,
             deliveredDevices: [],

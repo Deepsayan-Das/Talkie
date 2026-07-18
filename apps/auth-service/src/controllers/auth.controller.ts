@@ -1,4 +1,4 @@
-import { loginUser, logoutUser, registerUser, resendVerificationMail, rotateTokens, sendVerificationMail, verifyUser } from "../services/auth.service";
+import { loginUser, logoutUser, registerUser, resendVerificationMail, reissueTokensFromAccessToken, rotateTokens, sendVerificationMail, verifyUser } from "../services/auth.service";
 import { Request, Response } from "express";
 import jwt from 'jsonwebtoken';
 import env from "../config/env";
@@ -137,46 +137,72 @@ export const resendVerificationMailController = async (req: Request, res: Respon
 }
 
 export const rotateTokensController = async (req: Request, res: Response) => {
-    try {
-        const refreshToken = req.cookies['refreshToken']
-        if (!refreshToken) {
-            logger.warn('Token rotation — no refresh token provided');
-            return res.status(401).json({ success: false, message: 'No refresh token' })
-        }
-        logger.info('Rotating tokens');
-        const result = await rotateTokens(refreshToken);
-        logger.info('Tokens rotated successfully');
-        // accessToken in body, refreshToken in httpOnly cookie
-        const payload = jwt.decode(result.accessToken) as any;
-        const cookieOptions: any = {
+    const buildCookieOptions = (accessToken: string) => {
+        const payload = jwt.decode(accessToken) as any;
+        const isUnverified = Array.isArray(payload?.role) ? payload.role.includes('UNVERIFIED') : payload?.role === 'UNVERIFIED';
+        const opts: any = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax'
         };
-        const isUnverified = Array.isArray(payload?.role) ? payload.role.includes('UNVERIFIED') : payload?.role === 'UNVERIFIED';
-        if (!isUnverified) {
-            cookieOptions.maxAge = 7 * 24 * 60 * 60 * 1000;
+        if (!isUnverified) opts.maxAge = 7 * 24 * 60 * 60 * 1000;
+        return opts;
+    };
+
+    try {
+        const refreshToken = req.cookies['refreshToken'];
+        if (!refreshToken) {
+            logger.warn('Token rotation — no refresh token provided');
+            return res.status(401).json({ success: false, message: 'No refresh token' });
         }
-        res.cookie('refreshToken', result.refreshToken, cookieOptions).status(200).json({ success: true, data: { accessToken: result.accessToken } })
+
+        try {
+            // ── Happy path: normal cookie-based rotation ──────────────────────
+            logger.info('Rotating tokens');
+            const result = await rotateTokens(refreshToken);
+            logger.info('Tokens rotated successfully');
+            return res
+                .cookie('refreshToken', result.refreshToken, buildCookieOptions(result.accessToken))
+                .status(200)
+                .json({ success: true, data: { accessToken: result.accessToken } });
+
+        } catch (innerErr: any) {
+            // ── Fallback: refresh token not in DB — try the access token ──────
+            // This happens when the DB was wiped / row deleted while the user
+            // still has a valid access token in localStorage. Instead of forcing
+            // a full re-login, we use the still-valid access token as proof of
+            // identity and re-issue a brand-new refresh token.
+            if (innerErr.message === 'NOT REGISTERED') {
+                const rawAccessToken = req.headers['authorization']?.split(' ')[1];
+                if (!rawAccessToken) {
+                    logger.warn('Token rotation fallback — no access token in Authorization header');
+                    return res.status(401).json({ success: false, message: 'No refresh token' });
+                }
+                logger.info('Token rotation — refresh token missing from DB, falling back to access token');
+                const result = await reissueTokensFromAccessToken(rawAccessToken);
+                return res
+                    .cookie('refreshToken', result.refreshToken, buildCookieOptions(result.accessToken))
+                    .status(200)
+                    .json({ success: true, data: { accessToken: result.accessToken } });
+            }
+            throw innerErr; // re-throw anything else
+        }
+
     } catch (error: any) {
         if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
             logger.warn('Token rotation — invalid or expired JWT');
-            return res.status(401).json({ success: false, message: 'Invalid or expired token' })
+            return res.status(401).json({ success: false, message: 'Invalid or expired token' });
         }
-        if (error.message === "NOT REGISTERED") {
-            logger.warn('Token rotation — user not registered');
-            return res.status(404).json({ success: false, message: error.message })
-        }
-        if (error.message === "USER NOT VERIFIED") {
+        if (error.message === 'USER NOT VERIFIED') {
             logger.warn('Token rotation — user not verified');
-            return res.status(403).json({ success: false, message: error.message })
+            return res.status(403).json({ success: false, message: error.message });
         }
-        if (error.message === "Refresh Token Expired") {
+        if (error.message === 'Refresh Token Expired') {
             logger.warn('Token rotation — refresh token expired');
-            return res.status(410).json({ success: false, message: error.message })
+            return res.status(410).json({ success: false, message: error.message });
         }
         logger.error('Token rotation failed with unexpected error', { error: error.message });
-        return res.status(500).json({ success: false, message: "Internal server error" })
+        return res.status(500).json({ success: false, message: 'Internal server error' });
     }
 }
 

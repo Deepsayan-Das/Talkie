@@ -11,6 +11,9 @@ import React, {
 import { useRouter } from 'next/navigation'
 import { login as apiLogin, register as apiRegister, logout as apiLogout, rotateTokens } from '@/lib/auth'
 import type { AuthUser } from '@/lib/auth'
+import { generatePreKeys, getOrCreateIdentityKey, getOrCreateDeviceId, setCurrentUserId } from '@/lib/crypto/identity'
+import { api } from '@/lib/api'
+import { secureStore } from '@/lib/storage/secureStore'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface AuthContextValue {
@@ -42,10 +45,10 @@ function decodeUser(token: string): AuthUser | null {
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter()
-    const [user, setUser]               = useState<AuthUser | null>(null)
+    const [user, setUser] = useState<AuthUser | null>(null)
     const [accessToken, setAccessToken] = useState<string | null>(null)
-    const [isLoading, setIsLoading]     = useState(true)
-    const refreshTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [isLoading, setIsLoading] = useState(true)
+    const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     // Helper to store token in the right place
     const setStoredToken = useCallback((token: string, role: string | string[]) => {
@@ -87,57 +90,129 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
             } catch (err: any) {
                 const status = err?.response?.status;
-                if (status >= 400 && status < 500) {
-                    // Refresh failed — user needs to log in again
+                // 401 = no cookie at all, 410 = token genuinely expired
+                // Only these mean the session is truly dead — force re-login
+                if (status === 401 || status === 410) {
                     setUser(null)
                     setAccessToken(null)
                     clearStoredToken()
                     router.push('/login')
                 }
+                // 404 = token not in DB (e.g. DB was reset) but access token
+                // may still be valid — keep the user logged in, do NOT redirect.
+                // The 401 interceptor in api.ts will handle it when the access
+                // token eventually expires.
             }
         }, 14 * 60 * 1000)
     }, [router, setStoredToken, clearStoredToken])
 
-    // On mount — restore session
+    // On mount — restore session (run exactly once)
+    const didInit = useRef(false)
     useEffect(() => {
+        if (didInit.current) return
+        didInit.current = true
+
         const stored = getStoredToken()
-        if (stored) {
-            // Optimistically decode stored token to hydrate user immediately
-            const decoded = decodeUser(stored)
-            setAccessToken(stored)
-            setUser(decoded)
-            if (decoded) setStoredToken(stored, decoded.role)
-            // Then rotate to get a fresh token
-            rotateTokens()
-                .then(newToken => {
-                    const freshUser = decodeUser(newToken)
-                    if (freshUser) {
-                        setStoredToken(newToken, freshUser.role)
-                        setAccessToken(newToken)
-                        setUser(freshUser)
-                        scheduleRefresh()
-                    }
-                })
-                .catch((err: any) => {
-                    const status = err?.response?.status;
-                    if (status >= 400 && status < 500) {
-                        clearStoredToken()
-                        setAccessToken(null)
-                        setUser(null)
-                    }
-                })
-                .finally(() => setIsLoading(false))
-        } else {
+        if (!stored) {
             setIsLoading(false)
+            return
         }
 
+        // Optimistically hydrate from stored token immediately
+        const decoded = decodeUser(stored)
+        if (decoded?.id) setCurrentUserId(decoded.id)
+        setAccessToken(stored)
+        setUser(decoded)
+        if (decoded) setStoredToken(stored, decoded.role)
+
+        // Silently try to get a fresh token via the httpOnly cookie.
+        // If no cookie exists (e.g. stale localStorage entry), just keep
+        // the decoded user — the 401 interceptor will handle expiry later.
+        rotateTokens()
+            .then(newToken => {
+                const freshUser = decodeUser(newToken)
+                if (freshUser) {
+                    if (freshUser.id) setCurrentUserId(freshUser.id)
+                    setStoredToken(newToken, freshUser.role)
+                    setAccessToken(newToken)
+                    setUser(freshUser)
+                    scheduleRefresh()
+                }
+            })
+            .catch((err: any) => {
+                const status = err?.response?.status
+                // 401 = no cookie, 410 = token expired — these mean the session
+                // is truly dead; wipe state so the user gets redirected to login.
+                if (status === 401 || status === 410) {
+                    clearStoredToken()
+                    setAccessToken(null)
+                    setUser(null)
+                }
+                // 404 = refresh token not found in DB (e.g. server was restarted
+                // and DB was wiped) but we still have a valid access token in
+                // storage — keep the user logged in optimistically.
+                // The access token stays valid for its remaining lifetime;
+                // once it expires, the 401 interceptor in api.ts will redirect.
+            })
+            .finally(() => setIsLoading(false))
+
         return () => { if (refreshTimer.current) clearTimeout(refreshTimer.current) }
-    }, [scheduleRefresh, getStoredToken, setStoredToken, clearStoredToken])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []) // intentionally empty — runs once on mount only
+
+    // Ensure cryptographic identity is initialized for the logged-in user
+    useEffect(() => {
+        if (!user?.id) return;
+
+        const initializeE2EE = async () => {
+            try {
+                const deviceId = getOrCreateDeviceId();
+                const identityKey = await getOrCreateIdentityKey(deviceId);
+                console.log('Identity key initialized');
+
+                let unusedCountResult;
+                try {
+                    unusedCountResult = await api.get(`/keys/${deviceId}/unused-count`);
+                } catch (err) {
+                    console.warn('Could not reach key-service, skipping key refresh this session', err);
+                    return; // bail out entirely — do NOT prune, do NOT regenerate, just try again next login
+                }
+
+                const serverUnusedCount = unusedCountResult.data.count || 0;
+                const serverUnusedKeyIds = unusedCountResult.data.keyIds || [];
+                
+                // Prune local keys that are no longer marked unused on the server
+                await secureStore.pruneUsedOneTimePrekeys(serverUnusedKeyIds);
+                console.log('Pruned used pre-keys locally');
+
+                const preKeys = await generatePreKeys(deviceId, identityKey.signingPrivateKey, serverUnusedCount);
+                console.log('Pre keys generated locally');
+
+                await api.post('/keys/register', {
+                    deviceId,
+                    identityPublicKey: identityKey.publicKey,
+                    signingPublicKey: identityKey.signingPublicKey,
+                    signedPrekey: preKeys.signedPrekey,
+                    oneTimePrekeys: preKeys.oneTimePreKeys.map((k: any) => ({
+                        keyId: k.id,
+                        publicKey: k.publicKey
+                    }))
+                });
+
+                console.log('E2EE Keys successfully registered on server');
+            } catch (err) {
+                console.error('Failed to initialize E2EE keys:', err);
+            }
+        };
+
+        initializeE2EE();
+    }, [user?.id]);
 
     const login = useCallback(async (email: string, password: string): Promise<AuthUser> => {
         const authUser = await apiLogin(email, password)
         const decodedUser = decodeUser(authUser.accessToken)
         if (!decodedUser) throw new Error('Invalid token received on login')
+        setCurrentUserId(decodedUser.id)
         setStoredToken(authUser.accessToken, authUser.role)
         setAccessToken(authUser.accessToken)
         setUser(decodedUser)
@@ -149,6 +224,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const authUser = await apiRegister(email, password)
         const decodedUser = decodeUser(authUser.accessToken)
         if (!decodedUser) throw new Error('Invalid token received on register')
+        setCurrentUserId(decodedUser.id)
         setStoredToken(authUser.accessToken, authUser.role)
         setAccessToken(authUser.accessToken)
         setUser(decodedUser)

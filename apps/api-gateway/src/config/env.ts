@@ -18,6 +18,7 @@ const env = {
     chat_service_url: required('CHAT_SERVICE_URL'),
     file_service_url: required('FILE_SERVICE_URL'),
     notification_service_url: required('NOTIFICATION_SERVICE_URL'),
+    key_service_url: process.env.KEY_SERVICE_URL || 'http://localhost:3008',
 }
 
 export default env

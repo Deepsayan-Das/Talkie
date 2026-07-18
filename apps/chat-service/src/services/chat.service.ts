@@ -156,7 +156,15 @@ export const getMessages = async (roomId: string, userId: string, page: number, 
     return messages;
 }
 
-export const sendMessage = async (roomId: string, userId: string, content: string, attachments?: { url: string, contentType: string, fileSize: number }[]) => {
+export const sendMessage = async (
+    roomId: string,
+    userId: string,
+    senderDeviceId: string,
+    content: string | undefined,
+    deviceCiphertexts: Record<string, any> | undefined,
+    attachments?: { url: string, contentType: string, fileSize: number }[],
+    replyTo?: string
+) => {
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) {
         throw new Error("Room not found");
@@ -167,14 +175,25 @@ export const sendMessage = async (roomId: string, userId: string, content: strin
     }
 
     let targetDevices: string[] = [];
-    if (room.kind === 'dm') {
+    if (deviceCiphertexts) {
+        targetDevices = Object.keys(deviceCiphertexts);
+    } else if (room.kind === 'dm') {
         const recipient = room.members.find((member) => member.userId !== userId);
         if (recipient) {
             targetDevices = await redis.smembers(`presence:${recipient.userId}`);
         }
     }
 
-    const message = await MessageRepository.createMessage(roomId, userId, content, attachments || [], targetDevices);
+    const message = await MessageRepository.createMessage(
+        roomId,
+        userId,
+        senderDeviceId,
+        content,
+        deviceCiphertexts,
+        attachments || [],
+        targetDevices,
+        replyTo
+    );
     return message;
 }
 

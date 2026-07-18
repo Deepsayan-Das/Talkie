@@ -27,7 +27,10 @@ const startup = async () => {
             logger.info('Database connection established');
             
             const { initBroker } = await import('./config/broker');
-            await initBroker();
+            // Broker failure is non-fatal — auth.service.ts has a Redis fallback
+            await initBroker().catch((err: Error) => {
+                logger.warn('Message broker unavailable, falling back to Redis pub/sub', { error: err.message });
+            });
 
             app.listen(env.port, () => {
                 logger.info(`Auth service is running on port ${env.port}`);

@@ -181,13 +181,45 @@ export const rotateTokens = async (rawRefreshToken: string) => {
     const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
-    await rotateRefreshToken(userId, refreshTokenHash, expiresAt);
+    // delete-then-insert instead of UPDATE — UPDATE is a no-op if the row
+    // was already removed, silently producing no new token.
+    await deleteRefreshToken(userId);
+    await createRefreshToken(userId, refreshTokenHash, expiresAt);
     const accessToken = jwt.sign(
         { userId: userId, role: roles.includes('USER') ? 'USER' : 'UNVERIFIED' },
         env.jwt_secret,
         { expiresIn: env.jwt_expires_in as any }
     )
     logger.info('Tokens rotated successfully', { userId });
+    return { accessToken, refreshToken };
+}
+
+/**
+ * Re-issue tokens using a still-valid access token as proof of identity.
+ * Called when the refresh token cookie exists but the hash is no longer in the
+ * DB (e.g. DB was wiped, row was manually deleted, service restarted between
+ * sessions).  The access token must be unexpired — we verify it here.
+ */
+export const reissueTokensFromAccessToken = async (rawAccessToken: string) => {
+    // Will throw JsonWebTokenError / TokenExpiredError if invalid
+    const payload = jwt.verify(rawAccessToken, env.jwt_secret) as { userId: string; role: any };
+    const userId = payload.userId;
+    const roles = await getRolesByUserId(userId);
+    logger.info('Re-issuing tokens from valid access token', { userId });
+
+    const refreshToken = crypto.randomBytes(32).toString('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+    await deleteRefreshToken(userId);
+    await createRefreshToken(userId, refreshTokenHash, expiresAt);
+
+    const accessToken = jwt.sign(
+        { userId, role: roles.includes('USER') ? 'USER' : 'UNVERIFIED' },
+        env.jwt_secret,
+        { expiresIn: env.jwt_expires_in as any }
+    );
+    logger.info('Tokens re-issued from access token successfully', { userId });
     return { accessToken, refreshToken };
 }
 

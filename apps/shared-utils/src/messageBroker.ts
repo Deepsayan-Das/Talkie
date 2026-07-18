@@ -14,7 +14,19 @@ interface MessageBroker {
 
 export async function createMessageBroker(serviceName: string): Promise<MessageBroker> {
     const logger = createLogger(serviceName);
-    const url = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
+    const rawUrl = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
+
+    // Parse the URL so that URL-encoded special characters in credentials (e.g. %40 for @)
+    // are decoded correctly before being passed to amqplib.
+    const parsed = new URL(rawUrl);
+    const connectOptions = {
+        protocol: parsed.protocol.replace(':', ''),
+        hostname: parsed.hostname,
+        port: parsed.port ? parseInt(parsed.port) : 5672,
+        username: decodeURIComponent(parsed.username),
+        password: decodeURIComponent(parsed.password),
+        vhost: parsed.pathname === '/' || !parsed.pathname ? '/' : decodeURIComponent(parsed.pathname.slice(1)),
+    };
 
     // Retry connection on boot — RabbitMQ may not be ready yet when this service starts.
     let connection: any;
@@ -23,7 +35,7 @@ export async function createMessageBroker(serviceName: string): Promise<MessageB
 
     while (true) {
         try {
-            connection = await amqplib.connect(url);
+            connection = await amqplib.connect(connectOptions);
             logger.info('Connected to RabbitMQ');
             break;
         } catch (err) {
@@ -55,17 +67,24 @@ export async function createMessageBroker(serviceName: string): Promise<MessageB
             for (const key of bindingKeys) {
                 await channel.bindQueue(queueName, EXCHANGE_NAME, key);
             }
-            await channel.prefetch(1); // decided in Step 6 — fair dispatch, one at a time
+            await channel.prefetch(1); // fair dispatch, one at a time
 
             channel.consume(queueName, async (msg: amqplib.ConsumeMessage | null) => {
                 if (!msg) return;
                 const payload = JSON.parse(msg.content.toString());
-                await handler(
-                    payload,
-                    () => channel.ack(msg),
-                    () => channel.ack(msg) // "nack" here still acks per our retry-then-drop decision — see note below
-                );
-            });
+                try {
+                    await handler(
+                        payload,
+                        () => channel.ack(msg),
+                        () => channel.ack(msg) // nack still acks — retry-then-drop policy
+                    );
+                } catch (err) {
+                    // Always ack even on unexpected handler errors so the channel
+                    // doesn't accumulate unacknowledged messages and raise 406.
+                    logger.error('Message handler threw unexpectedly — acking to unblock queue', { queueName, err });
+                    try { channel.ack(msg); } catch { /* channel may already be closing */ }
+                }
+            }, { noAck: false });
         },
     };
 }

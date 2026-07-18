@@ -16,7 +16,15 @@ export interface ChatMessage {
     _id: string
     roomId: string
     senderId: string
+    senderDeviceId?: string
     content: string
+    deviceCiphertexts?: Record<string, {
+        ciphertext: string;
+        nonce: string;
+        messageIndex: number;
+        myRatchetPub: string;
+        x3dhInit?: any;
+    }>
     attachments?: Attachment[]
     replyTo?: string
     seenBy: SeenBy[]

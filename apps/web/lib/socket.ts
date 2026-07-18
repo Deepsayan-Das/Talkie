@@ -1,4 +1,7 @@
 import { io, Socket } from 'socket.io-client'
+import { getOrCreateDeviceId } from './crypto/identity'
+import { sendEncryptedMessage } from './crypto/messaging';
+import { api } from './api';
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? 'http://localhost:5003'
 
@@ -6,11 +9,7 @@ let socket: Socket | null = null
 
 // ─── Get or create a socket connected with the given accessToken ──────────────
 export function getSocket(accessToken: string): Socket {
-    let deviceId = typeof window !== 'undefined' ? localStorage.getItem('deviceId') : null;
-    if (!deviceId && typeof window !== 'undefined') {
-        deviceId = crypto.randomUUID();
-        localStorage.setItem('deviceId', deviceId);
-    }
+    const deviceId = getOrCreateDeviceId();
 
     if (socket) {
         socket.auth = { token: `Bearer ${accessToken}`, deviceId };
@@ -41,17 +40,62 @@ export function joinRoom(roomId: string): void {
     socket?.emit('joinRoom', roomId)
 }
 
+// ─── Leave room ───────────────────────────────────────────────────────────────
 export function leaveRoom(roomId: string): void {
     socket?.emit('leaveRoom', roomId)
 }
 
-export function sendMessage(payload: {
-    roomId: string
-    content: string
-    attachments?: { url: string; contentType: string; fileSize: number }[]
+export async function sendMessage(payload: {
+    recipientUserId: string,
+    senderUserId: string,
+    roomId: string,
+    content: string,
+    attachments?: { url: string; contentType: string; fileSize: number }[],
     replyTo?: string
-}): void {
-    socket?.emit('sendMessage', payload)
+}): Promise<void> {
+    const myDeviceId = getOrCreateDeviceId();
+
+    // 1. Fetch all registered devices for the recipient and the sender
+    const [recipientRes, senderRes] = await Promise.all([
+        api.get(`/keys/${payload.recipientUserId}/devices`),
+        api.get(`/keys/${payload.senderUserId}/devices`)
+    ]);
+
+    const recipientDevices: string[] = recipientRes.data.devices || [];
+    const senderDevices: string[] = senderRes.data.devices || [];
+
+    const deviceCiphertexts: Record<string, any> = {};
+
+    // 2. Encrypt separately for each recipient device
+    for (const deviceId of recipientDevices) {
+        const encrypted = await sendEncryptedMessage(
+            payload.recipientUserId,
+            deviceId,
+            myDeviceId,
+            payload.content
+        );
+        deviceCiphertexts[deviceId] = encrypted;
+    }
+
+    // 3. Encrypt separately for each of the sender's own devices (excluding current device is optional, but encrypting for all ensures we can decrypt history)
+    for (const deviceId of senderDevices) {
+        if (deviceCiphertexts[deviceId]) continue; // Avoid double encryption
+        const encrypted = await sendEncryptedMessage(
+            payload.senderUserId,
+            deviceId,
+            myDeviceId,
+            payload.content
+        );
+        deviceCiphertexts[deviceId] = encrypted;
+    }
+
+    // 4. Emit message with multi-device ciphertext payload
+    socket?.emit('sendMessage', {
+        roomId: payload.roomId,
+        deviceCiphertexts,
+        attachments: payload.attachments,
+        replyTo: payload.replyTo,
+    })
 }
 
 export function emitTyping(roomId: string): void {

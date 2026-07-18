@@ -55,16 +55,21 @@ export const initSocketHandler = (httpServer: HttpServer) => {
         // Server emits : 'newMessage' → entire room
         socket.on('sendMessage', async (data: {
             roomId: string;
-            content: string;
+            content?: string;
+            deviceCiphertexts?: Record<string, any>;
             attachments?: { url: string; contentType: string; fileSize: number }[];
+            replyTo?: string;
         }) => {
             try {
                 logger.info('Sending message', { userId: socket.data.userId, roomId: data.roomId });
                 const message = await ChatService.sendMessage(
                     data.roomId,
                     socket.data.userId,
+                    socket.data.deviceId,
                     data.content,
-                    data.attachments
+                    data.deviceCiphertexts,
+                    data.attachments,
+                    data.replyTo
                 );
                 io.to(data.roomId).emit('newMessage', message);
                 logger.info('Message sent successfully', { userId: socket.data.userId, roomId: data.roomId, messageId: message.id });

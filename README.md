@@ -772,3 +772,12 @@ When creating an object store without an inline `keyPath` (e.g., `db.createObjec
 
 **Q: How does `db.put()` behave when called twice with the same key?**
 `put()` acts as an upsert (insert or update). If you call `db.put("sessions", state, "convo-123")` twice with different payloads, the second call will silently overwrite the existing record rather than duplicating it or throwing an error. If you want it to throw an error when a key already exists, you must use `db.add()` instead.
+
+**Q: How do you handle encrypting a message for the sender's own device in a Double Ratchet architecture?**
+A: We use a self-encryption loopback. You cannot establish a Double Ratchet session with yourself because the state machine is strictly directional (Alice to Bob). If a sender encrypts a message (turning the "send" ratchet) and then immediately decrypts their own bounced message (turning the "receive" ratchet on the same session object), the cryptographic state becomes fundamentally corrupted. Instead, when encrypting for the current device, we bypass the ratchet entirely and symmetrically encrypt the payload using a deterministic key derived directly from the device's local Identity Private Key.
+
+**Q: How do you handle backward compatibility when adding new fields to an IndexedDB schema (like adding signing keys to an identity bundle)?**
+A: You must implement a fallback generator. When loading an existing Identity Key from IndexedDB, we explicitly check if the new `signingPrivateKey` field exists. If it is missing (because the key was generated on an older version of the app), we bypass the cached key and gracefully regenerate a brand new identity bundle that complies with the updated schema, then silently register the new keys with the server.
+
+**Q: How do you handle End-to-End Encryption key registration failures during login?**
+A: If the key-service is down or fails during login, we catch the error, log a warning, and skip registration for that session without clearing or pruning any local data. The registration flow (`initializeE2EE`) is bound to a React `useEffect` dependent on the user ID, meaning it will automatically retry the next time the user logs in or does a hard refresh, eventually syncing the keys when the server recovers.
