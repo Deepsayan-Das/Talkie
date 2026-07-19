@@ -148,6 +148,14 @@ export async function receiveEncryptedMessage(
 }
 
 export async function decryptIncomingMessage(msg: ChatMessage): Promise<ChatMessage> {
+    const cached = await secureStore.getCachedMessage(msg._id);
+    if (cached !== null) {
+        // Merge network metadata (like reactions, seenBy) with cached content
+        const updatedMsg = { ...msg, content: cached.content };
+        await secureStore.setCachedMessage(updatedMsg).catch(console.error);
+        return updatedMsg;
+    }
+
     if (!msg.deviceCiphertexts || msg.isDeleted) {
         return msg;
     }
@@ -165,10 +173,12 @@ export async function decryptIncomingMessage(msg: ChatMessage): Promise<ChatMess
     try {
         const senderKey = msg.senderDeviceId || msg.senderId;
         const decryptedContent = await receiveEncryptedMessage(myDeviceId, senderKey, payload);
-        return {
-            ...msg,
-            content: decryptedContent,
-        };
+        const fullyDecrypted = { ...msg, content: decryptedContent };
+        
+        // Cache the fully decrypted message object (handles sender and receiver paths when echoed back)
+        await secureStore.setCachedMessage(fullyDecrypted).catch(console.error);
+        
+        return fullyDecrypted;
     } catch (err: any) {
         console.error('Failed to decrypt message:', err);
         return {
@@ -176,4 +186,35 @@ export async function decryptIncomingMessage(msg: ChatMessage): Promise<ChatMess
             content: '[Failed to decrypt message]',
         };
     }
+}
+
+// ─── Binary blob E2EE (for audio/file encryption) ─────────────────────────────
+// Uses a random symmetric key encrypted per-message. The key is embedded in the
+// encrypted text content so existing E2EE ratchet protects it automatically.
+
+export async function encryptBlob(data: Uint8Array): Promise<{
+    encryptedBlob: Uint8Array;
+    blobKeyB64: string;
+    blobNonceB64: string;
+}> {
+    await sodium.ready;
+    const key = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
+    const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
+    const encryptedBlob = sodium.crypto_secretbox_easy(data, nonce, key);
+    return {
+        encryptedBlob,
+        blobKeyB64: sodium.to_base64(key),
+        blobNonceB64: sodium.to_base64(nonce),
+    };
+}
+
+export async function decryptBlob(
+    encryptedData: Uint8Array,
+    blobKeyB64: string,
+    blobNonceB64: string
+): Promise<Uint8Array> {
+    await sodium.ready;
+    const key = sodium.from_base64(blobKeyB64);
+    const nonce = sodium.from_base64(blobNonceB64);
+    return sodium.crypto_secretbox_open_easy(encryptedData, nonce, key);
 }

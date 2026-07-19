@@ -30,6 +30,12 @@ export interface ChatMessage {
     seenBy: SeenBy[]
     isDeleted: boolean
     reactions?: Record<string, string>
+    forwardedFrom?: {
+        originalSenderId: string
+        originalRoomId: string
+        originalMessageId: string
+        originalTimestamp: string
+    }
     delivery?: {
         targetDevices: string[]
         deliveredDevices: string[]

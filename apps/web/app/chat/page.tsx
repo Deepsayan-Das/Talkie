@@ -1,6 +1,6 @@
 'use client'
 
-import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, FileText, Reply, X } from 'lucide-react'
+import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, Pause, Square, FileText, Reply, X, Mic, Forward, CircleStop } from 'lucide-react'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -13,8 +13,9 @@ import { resendVerification } from '@/lib/auth'
 import { useSocket } from '@/context/SocketContext'
 import { getUserProfile, getAllRelations, uploadFile } from '@/lib/user'
 import { getRooms, getMessages, createRoom, updateGroupInfo, removeMember, promoteMember, demoteMember } from '@/lib/chat'
-import { joinRoom, leaveRoom, sendMessage as socketSend, emitTyping, emitStopTyping, markAsSeen, reactToMessage, messageDelivered } from '@/lib/socket'
-import { decryptIncomingMessage } from '@/lib/crypto/messaging'
+import { joinRoom, leaveRoom, sendMessage as socketSend, sendAudioMessage, forwardMessage, emitTyping, emitStopTyping, markAsSeen, reactToMessage, messageDelivered } from '@/lib/socket'
+import { decryptIncomingMessage, encryptBlob, decryptBlob } from '@/lib/crypto/messaging'
+import { secureStore } from '@/lib/storage/secureStore'
 import type { Room, ChatMessage } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
 
@@ -60,6 +61,24 @@ function lastMessage(room: Room): string {
     return room.name ?? `${room.members.length} members`
 }
 
+// Check if a message is an audio message (by parsing decrypted content)
+function isAudioMessage(msg: ChatMessage): { type: 'audio'; blobKey: string; blobNonce: string; durationMs: number } | null {
+    if (!msg.content || !msg.attachments?.length) return null;
+    try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed.type === 'audio') return parsed;
+    } catch { /* not JSON — normal text message */ }
+    return null;
+}
+
+// Format ms to MM:SS
+function formatDuration(ms: number): string {
+    const totalSec = Math.round(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 const DateSeparator = ({ label }: { label: string }) => (
     <div className='flex items-center gap-3 my-3 px-2'>
@@ -69,7 +88,534 @@ const DateSeparator = ({ label }: { label: string }) => (
     </div>
 )
 
-const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, replyTargetName, onReact, onReplyClick }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; replyTarget?: ChatMessage; replyTargetName?: string; onReact: (emoji: string | null) => void; onReplyClick?: (msgId: string) => void }) => {
+// ─── AudioPlayback (inline in bubble) ─────────────────────────────────────────
+const AudioPlayback = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) => {
+    const audioMeta = isAudioMessage(msg);
+    const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle');
+    const [progress, setProgress] = useState(0);
+    const [duration, setDuration] = useState(audioMeta?.durationMs || 0);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const objectUrlRef = useRef<string | null>(null);
+    const rafRef = useRef<number>(0);
+
+    useEffect(() => {
+        return () => {
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            cancelAnimationFrame(rafRef.current);
+        };
+    }, []);
+
+    const loadAndPlay = async () => {
+        if (!audioMeta || !msg.attachments?.[0]) return;
+        setState('loading');
+        try {
+            // Fetch the encrypted blob from the file service
+            const res = await fetch(msg.attachments[0].url);
+            const encryptedBytes = new Uint8Array(await res.arrayBuffer());
+            // Decrypt client-side
+            const decryptedBytes = await decryptBlob(encryptedBytes, audioMeta.blobKey, audioMeta.blobNonce);
+            const blob = new Blob([decryptedBytes], { type: 'audio/webm' });
+            const url = URL.createObjectURL(blob);
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = url;
+
+            const audio = new Audio(url);
+            audioRef.current = audio;
+
+            audio.onloadedmetadata = () => {
+                if (audio.duration && isFinite(audio.duration)) {
+                    setDuration(audio.duration * 1000);
+                }
+            };
+
+            audio.onended = () => {
+                setState('idle');
+                setProgress(0);
+                cancelAnimationFrame(rafRef.current);
+            };
+
+            const tick = () => {
+                if (audio.currentTime && audio.duration) {
+                    setProgress(audio.currentTime / audio.duration);
+                }
+                rafRef.current = requestAnimationFrame(tick);
+            };
+
+            await audio.play();
+            setState('playing');
+            tick();
+        } catch (err) {
+            console.error('Audio playback failed:', err);
+            setState('idle');
+        }
+    };
+
+    const togglePlayPause = () => {
+        if (!audioRef.current) return;
+        if (state === 'playing') {
+            audioRef.current.pause();
+            setState('paused');
+            cancelAnimationFrame(rafRef.current);
+        } else if (state === 'paused') {
+            audioRef.current.play();
+            setState('playing');
+            const tick = () => {
+                if (audioRef.current?.currentTime && audioRef.current?.duration) {
+                    setProgress(audioRef.current.currentTime / audioRef.current.duration);
+                }
+                rafRef.current = requestAnimationFrame(tick);
+            };
+            tick();
+        }
+    };
+
+    // Generate fixed pseudo-waveform bars
+    const bars = Array.from({ length: 28 }, (_, i) => {
+        const h = 12 + Math.sin(i * 0.7) * 10 + Math.cos(i * 1.3) * 6;
+        return Math.max(4, Math.min(28, h));
+    });
+
+    return (
+        <div className="flex items-center gap-3 min-w-[220px]">
+            <button
+                onClick={state === 'idle' ? loadAndPlay : togglePlayPause}
+                disabled={state === 'loading'}
+                className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+                    isMine
+                        ? 'bg-white/20 hover:bg-white/30 text-white'
+                        : 'bg-[#ff4d00]/20 hover:bg-[#ff4d00]/30 text-[#ff4d00]'
+                } ${state === 'loading' ? 'animate-pulse' : ''}`}
+            >
+                {state === 'loading' ? (
+                    <Loader2 size={18} className="animate-spin" />
+                ) : state === 'playing' ? (
+                    <Pause size={16} fill="currentColor" />
+                ) : (
+                    <Play size={16} fill="currentColor" />
+                )}
+            </button>
+            <div className="flex-1 flex flex-col gap-1">
+                <div className="flex items-end gap-[2px] h-7">
+                    {bars.map((h, i) => {
+                        const barProgress = i / bars.length;
+                        const isActive = barProgress <= progress;
+                        return (
+                            <div
+                                key={i}
+                                className="rounded-full transition-all duration-100"
+                                style={{
+                                    width: '3px',
+                                    height: `${h}px`,
+                                    backgroundColor: isActive
+                                        ? (isMine ? 'rgba(255,255,255,0.9)' : '#ff4d00')
+                                        : (isMine ? 'rgba(255,255,255,0.3)' : '#555'),
+                                }}
+                            />
+                        );
+                    })}
+                </div>
+                <span className={`text-[10px] ${isMine ? 'text-white/60' : 'text-[#888]'}`}>
+                    {duration > 0 ? formatDuration(duration) : '0:00'}
+                </span>
+            </div>
+        </div>
+    );
+};
+
+// ─── Audio Recorder Modal ─────────────────────────────────────────────────────
+type RecorderState = 'idle' | 'recording' | 'paused' | 'stopped';
+
+const AudioRecorderModal = ({
+    onClose,
+    onSend
+}: {
+    onClose: () => void;
+    onSend: (blob: Blob, durationMs: number) => void;
+}) => {
+    const [recState, setRecState] = useState<RecorderState>('idle');
+    const [elapsed, setElapsed] = useState(0);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const mediaRecRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const startTimeRef = useRef(0);
+    const pausedElapsedRef = useRef(0);
+    const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+    const finalBlobRef = useRef<Blob | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            if (mediaRecRef.current && mediaRecRef.current.state !== 'inactive') {
+                mediaRecRef.current.stop();
+            }
+            mediaRecRef.current?.stream?.getTracks().forEach(t => t.stop());
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const startTimer = () => {
+        startTimeRef.current = Date.now();
+        timerRef.current = setInterval(() => {
+            setElapsed(pausedElapsedRef.current + (Date.now() - startTimeRef.current));
+        }, 100);
+    };
+
+    const stopTimer = () => {
+        if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+        }
+        pausedElapsedRef.current += (Date.now() - startTimeRef.current);
+    };
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mr = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+            chunksRef.current = [];
+
+            mr.ondataavailable = (e) => {
+                if (e.data.size > 0) chunksRef.current.push(e.data);
+            };
+
+            mr.onstop = () => {
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                finalBlobRef.current = blob;
+                const url = URL.createObjectURL(blob);
+                if (previewUrl) URL.revokeObjectURL(previewUrl);
+                setPreviewUrl(url);
+            };
+
+            mediaRecRef.current = mr;
+            mr.start(250); // collect data every 250ms
+            setRecState('recording');
+            pausedElapsedRef.current = 0;
+            setElapsed(0);
+            startTimer();
+        } catch (err) {
+            console.error('Microphone access denied:', err);
+        }
+    };
+
+    const pauseRecording = () => {
+        mediaRecRef.current?.pause();
+        stopTimer();
+        setRecState('paused');
+    };
+
+    const resumeRecording = () => {
+        mediaRecRef.current?.resume();
+        startTimer();
+        setRecState('recording');
+    };
+
+    const stopRecording = () => {
+        mediaRecRef.current?.stop();
+        stopTimer();
+        // Stop mic tracks
+        mediaRecRef.current?.stream?.getTracks().forEach(t => t.stop());
+        setRecState('stopped');
+    };
+
+    const cancelRecording = () => {
+        if (mediaRecRef.current && mediaRecRef.current.state !== 'inactive') {
+            mediaRecRef.current.stop();
+        }
+        mediaRecRef.current?.stream?.getTracks().forEach(t => t.stop());
+        if (timerRef.current) clearInterval(timerRef.current);
+        onClose();
+    };
+
+    const playPreview = () => {
+        if (!previewUrl) return;
+        if (previewAudioRef.current) {
+            previewAudioRef.current.pause();
+        }
+        const audio = new Audio(previewUrl);
+        previewAudioRef.current = audio;
+        audio.onended = () => setIsPlaying(false);
+        audio.play();
+        setIsPlaying(true);
+    };
+
+    const stopPreview = () => {
+        previewAudioRef.current?.pause();
+        if (previewAudioRef.current) previewAudioRef.current.currentTime = 0;
+        setIsPlaying(false);
+    };
+
+    const handleSend = () => {
+        if (!finalBlobRef.current) return;
+        onSend(finalBlobRef.current, elapsed);
+    };
+
+    // Generate animated waveform bars for recording state
+    const waveBars = Array.from({ length: 40 }, (_, i) => i);
+
+    return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className={`w-full max-w-md bg-[#1c1c1c] border-2 border-[#353535] p-8 flex flex-col items-center gap-6 shadow-2xl ${jetbrains.className}`}
+                style={{ clipPath: 'polygon(20px 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%, 0 20px)' }}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between w-full">
+                    <h3 className={`text-lg font-black text-white uppercase tracking-wider ${anybody.className}`}>
+                        Voice Message
+                    </h3>
+                    <button onClick={cancelRecording} className="text-[#888] hover:text-white transition-colors p-1">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* Timer display */}
+                <div className="text-4xl font-bold text-white tracking-widest tabular-nums">
+                    {formatDuration(elapsed)}
+                </div>
+
+                {/* Waveform visualization */}
+                <div className="flex items-center gap-[2px] h-16 w-full justify-center">
+                    {recState === 'recording' ? (
+                        waveBars.map(i => (
+                            <div
+                                key={i}
+                                className="w-[3px] rounded-full bg-[#ff4d00]"
+                                style={{
+                                    animation: `audioWave 0.8s ${i * 0.04}s ease-in-out infinite alternate`,
+                                    height: '8px',
+                                }}
+                            />
+                        ))
+                    ) : recState === 'paused' ? (
+                        waveBars.map(i => (
+                            <div
+                                key={i}
+                                className="w-[3px] rounded-full bg-[#ff4d00]/40"
+                                style={{ height: `${8 + Math.sin(i * 0.5) * 12}px` }}
+                            />
+                        ))
+                    ) : recState === 'stopped' ? (
+                        waveBars.map(i => (
+                            <div
+                                key={i}
+                                className="w-[3px] rounded-full bg-[#ff4d00]/70"
+                                style={{ height: `${8 + Math.sin(i * 0.7) * 16 + Math.cos(i * 1.3) * 8}px` }}
+                            />
+                        ))
+                    ) : (
+                        <div className="flex items-center gap-2 text-[#555]">
+                            <Mic size={24} />
+                            <span className={`text-sm ${anybody.className}`}>Tap to start</span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-4 mt-2">
+                    {recState === 'idle' && (
+                        <motion.button
+                            whileTap={{ scale: 0.9 }}
+                            onClick={startRecording}
+                            className="w-20 h-20 rounded-full bg-[#ff4d00] flex items-center justify-center text-white shadow-lg shadow-[#ff4d00]/30 hover:bg-[#e04500] transition-colors"
+                        >
+                            <Mic size={36} />
+                        </motion.button>
+                    )}
+
+                    {recState === 'recording' && (
+                        <>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={pauseRecording}
+                                className="w-16 h-16 rounded-full bg-[#353535] flex items-center justify-center text-white hover:bg-[#454545] transition-colors border-2 border-[#555]"
+                            >
+                                <Pause size={28} />
+                            </motion.button>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={stopRecording}
+                                className="w-16 h-16 rounded-full bg-[#ff4d00] flex items-center justify-center text-white hover:bg-[#e04500] transition-colors shadow-lg shadow-[#ff4d00]/30"
+                            >
+                                <CircleStop size={28} />
+                            </motion.button>
+                        </>
+                    )}
+
+                    {recState === 'paused' && (
+                        <>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={resumeRecording}
+                                className="w-16 h-16 rounded-full bg-[#ff4d00] flex items-center justify-center text-white hover:bg-[#e04500] transition-colors shadow-lg shadow-[#ff4d00]/30"
+                            >
+                                <Mic size={28} />
+                            </motion.button>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={cancelRecording}
+                                className="w-16 h-16 rounded-full bg-[#353535] flex items-center justify-center text-red-400 hover:bg-red-500/20 transition-colors border-2 border-red-500/40"
+                            >
+                                <X size={28} />
+                            </motion.button>
+                        </>
+                    )}
+
+                    {recState === 'stopped' && (
+                        <>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={isPlaying ? stopPreview : playPreview}
+                                className="w-14 h-14 rounded-full bg-[#353535] flex items-center justify-center text-white hover:bg-[#454545] transition-colors border-2 border-[#555]"
+                            >
+                                {isPlaying ? <Square size={20} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+                            </motion.button>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={cancelRecording}
+                                className="w-14 h-14 rounded-full bg-[#353535] flex items-center justify-center text-red-400 hover:bg-red-500/20 transition-colors border-2 border-red-500/40"
+                            >
+                                <X size={22} />
+                            </motion.button>
+                            <motion.button
+                                whileTap={{ scale: 0.9 }}
+                                onClick={handleSend}
+                                className="w-14 h-14 rounded-full bg-[#ff4d00] flex items-center justify-center text-white hover:bg-[#e04500] transition-colors shadow-lg shadow-[#ff4d00]/30"
+                            >
+                                <Send size={20} />
+                            </motion.button>
+                        </>
+                    )}
+                </div>
+
+                {/* Status text */}
+                <p className={`text-xs text-[#888] ${anybody.className}`}>
+                    {recState === 'idle' && 'Press the mic to start recording'}
+                    {recState === 'recording' && 'Recording...'}
+                    {recState === 'paused' && 'Recording paused'}
+                    {recState === 'stopped' && 'Review and send your voice message'}
+                </p>
+            </motion.div>
+
+            <style>{`
+                @keyframes audioWave {
+                    0% { height: 4px; }
+                    100% { height: 32px; }
+                }
+            `}</style>
+        </div>
+    );
+};
+
+// ─── Forward Room Picker Modal ────────────────────────────────────────────────
+const ForwardModal = ({
+    message,
+    rooms,
+    profiles,
+    currentUserId,
+    onClose,
+    onForward,
+}: {
+    message: ChatMessage;
+    rooms: Room[];
+    profiles: Record<string, UserProfile>;
+    currentUserId: string;
+    onClose: () => void;
+    onForward: (targetRoom: Room) => void;
+}) => {
+    const [searchQuery, setSearchQuery] = useState('');
+    
+    const filteredRooms = rooms.filter(room => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        if (room.kind === 'dm') {
+            const otherId = room.members.find(m => m.userId !== currentUserId)?.userId;
+            const otherName = otherId ? profiles[otherId]?.displayName : '';
+            return otherName?.toLowerCase().includes(q);
+        }
+        return room.name?.toLowerCase().includes(q);
+    });
+
+    return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <motion.div
+                initial={{ opacity: 0, y: 50 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 50 }}
+                className={`w-full max-w-md bg-[#1c1c1c] border-2 border-[#353535] flex flex-col max-h-[80vh] shadow-2xl ${jetbrains.className}`}
+            >
+                <div className="flex items-center justify-between p-5 border-b-2 border-[#353535]">
+                    <h3 className={`text-lg font-black text-white uppercase tracking-wider ${anybody.className}`}>
+                        Forward To
+                    </h3>
+                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors p-1">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="px-4 py-3 border-b-2 border-[#353535]">
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        placeholder="Search conversations..."
+                        className="w-full bg-[#252525] text-white px-4 py-2.5 text-sm border-2 border-[#353535] focus:border-[#ff4d00] outline-none transition-colors rounded-none"
+                    />
+                </div>
+
+                {/* Forwarded message preview */}
+                <div className="px-4 py-3 bg-[#252525] border-b-2 border-[#353535]">
+                    <div className="border-l-4 border-[#ff4d00] pl-3">
+                        <p className="text-[10px] text-[#ff4d00] font-bold uppercase tracking-wider mb-1">Forwarding message</p>
+                        <p className="text-xs text-[#aaa] truncate">{message.content || '📎 Attachment'}</p>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto">
+                    {filteredRooms.map(room => {
+                        const otherId = room.members.find(m => m.userId !== currentUserId)?.userId;
+                        const otherProfile = otherId ? profiles[otherId] : null;
+                        const name = room.kind === 'dm'
+                            ? (otherProfile?.displayName ?? 'Unknown')
+                            : (room.name ?? 'Group');
+                        const avatar = room.kind === 'dm' ? otherProfile?.avatar : room.avatar;
+
+                        return (
+                            <div
+                                key={room._id}
+                                onClick={() => onForward(room)}
+                                className="flex items-center gap-3 p-4 cursor-pointer hover:bg-[#ff4d00]/10 border-b border-[#252525] transition-colors"
+                            >
+                                {avatar ? (
+                                    <img src={avatar} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                                ) : (
+                                    <div className="w-10 h-10 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+                                        {name[0]?.toUpperCase()}
+                                    </div>
+                                )}
+                                <div className="flex-1 overflow-hidden">
+                                    <p className="text-sm font-bold text-white truncate">{name}</p>
+                                    <p className="text-[10px] text-[#666] uppercase tracking-wider">{room.kind === 'dm' ? 'Direct Message' : `${room.members.length} members`}</p>
+                                </div>
+                                <Forward size={16} className="text-[#555] flex-shrink-0" />
+                            </div>
+                        );
+                    })}
+                    {filteredRooms.length === 0 && (
+                        <p className={`text-center text-[#555] py-10 text-sm ${anybody.className}`}>No conversations found</p>
+                    )}
+                </div>
+            </motion.div>
+        </div>
+    );
+};
+
+const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTarget, replyTargetName, onReact, onReplyClick }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; onForward: () => void; replyTarget?: ChatMessage; replyTargetName?: string; onReact: (emoji: string | null) => void; onReplyClick?: (msgId: string) => void }) => {
     const [showReactions, setShowReactions] = useState(false);
     const reactionsRef = useRef<HTMLDivElement>(null);
     const reactions = msg.reactions || {};
@@ -95,9 +641,12 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, reply
     return (
         <div id={`message-${msg._id}`} className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4 py-1 group transition-colors duration-500`}>
             <div className={`flex flex-col gap-1 max-w-[65%] relative ${isMine ? 'items-end' : 'items-start'}`}>
-                <div className={`absolute top-2 ${isMine ? '-left-20' : '-right-20'} opacity-0 group-hover:opacity-100 ${showReactions ? 'opacity-100' : ''} transition-opacity z-10 flex gap-1 bg-[#252525] p-1 rounded-full shadow-lg border border-[#353535]`}>
+                <div className={`absolute top-2 ${isMine ? '-left-24' : '-right-24'} opacity-0 group-hover:opacity-100 ${showReactions ? 'opacity-100' : ''} transition-opacity z-10 flex gap-1 bg-[#252525] p-1 rounded-full shadow-lg border border-[#353535]`}>
                     <button onClick={onReply} className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="Reply">
                         <Reply size={14} />
+                    </button>
+                    <button onClick={onForward} className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="Forward">
+                        <Forward size={14} />
                     </button>
                     <div className="flex gap-1 relative" ref={reactionsRef}>
                         <button onClick={() => setShowReactions(!showReactions)} className={`p-1.5 rounded-full hover:bg-[#ff4d00] ${showReactions ? 'text-white bg-[#ff4d00]' : 'text-[#888] hover:text-white'}`} title="React">
@@ -126,6 +675,12 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, reply
                         style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
                         className={`px-4 py-3 text-sm leading-relaxed flex flex-col gap-2 ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
                     >
+                        {msg.forwardedFrom && (
+                            <div className={`flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold mb-1 ${isMine ? 'text-white/70' : 'text-[#ff4d00]/80'}`}>
+                                <Forward size={10} />
+                                <span>Forwarded</span>
+                            </div>
+                        )}
                         {replyTarget && (
                             <div 
                                 onClick={() => onReplyClick && onReplyClick(replyTarget._id)}
@@ -143,20 +698,26 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, replyTarget, reply
                                 </span>
                             </div>
                         )}
-                        {msg.attachments && msg.attachments.length > 0 && (
-                            <div className="flex flex-col gap-2">
-                                {msg.attachments.map((att, i) => (
-                                    att.contentType.startsWith('image/') ? (
-                                        <img key={i} src={att.url} alt="attachment" className="max-w-full rounded bg-black/20" />
-                                    ) : (
-                                        <a key={i} href={att.url} target="_blank" rel="noreferrer" className="underline text-sm break-all font-bold">
-                                            📄 Download File
-                                        </a>
-                                    )
-                                ))}
-                            </div>
+                        {isAudioMessage(msg) ? (
+                            <AudioPlayback msg={msg} isMine={isMine} />
+                        ) : (
+                            <>
+                                {msg.attachments && msg.attachments.length > 0 && (
+                                    <div className="flex flex-col gap-2">
+                                        {msg.attachments.map((att, i) => (
+                                            att.contentType.startsWith('image/') ? (
+                                                <img key={i} src={att.url} alt="attachment" className="max-w-full rounded bg-black/20" />
+                                            ) : (
+                                                <a key={i} href={att.url} target="_blank" rel="noreferrer" className="underline text-sm break-all font-bold">
+                                                    📄 Download File
+                                                </a>
+                                            )
+                                        ))}
+                                    </div>
+                                )}
+                                {msg.content && <span>{msg.content}</span>}
+                            </>
                         )}
-                        {msg.content && <span>{msg.content}</span>}
                     </div>
                 )}
                 
@@ -651,6 +1212,9 @@ const ChatInner = () => {
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [uploadingFile, setUploadingFile] = useState(false)
     const [hasPendingRequests, setHasPendingRequests] = useState(false)
+    const [isAudioRecorderOpen, setIsAudioRecorderOpen] = useState(false)
+    const [sendingAudio, setSendingAudio] = useState(false)
+    const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null)
 
     // ── Click outside emoji picker ────────────────────────────────────────────
     useEffect(() => {
@@ -682,8 +1246,16 @@ const ChatInner = () => {
 
     // ── Load rooms on mount ───────────────────────────────────────────────────
     useEffect(() => {
+        secureStore.getCachedRooms().then(cached => {
+            if (cached.length > 0) {
+                setRooms(prev => prev.length === 0 ? cached : prev)
+                setRoomsLoading(false)
+            }
+        }).catch(console.error)
+
         getRooms()
             .then(async data => {
+                await secureStore.setCachedRooms(data).catch(console.error)
                 setRooms(data)
                 
                 const ids = new Set<string>()
@@ -736,6 +1308,16 @@ const ChatInner = () => {
         setMsgsLoading(true)
         setReplyingTo(null)
 
+        secureStore.getCachedMessagesForRoom(roomId).then(cached => {
+            if (cached.length > 0) {
+                setMessages(prev => {
+                    if (prev.length > 0) return prev; // If network already landed, don't overwrite
+                    return cached;
+                });
+                setMsgsLoading(false);
+            }
+        }).catch(console.error);
+
         getMessages(roomId, 1, 50)
             .then(async data => {
                 const decrypted = await Promise.all(data.map(m => decryptIncomingMessage(m)))
@@ -785,8 +1367,9 @@ const ChatInner = () => {
             if (userId !== user?.id) setIsTyping(false)
         }
 
-        const onMessageEdited = (updated: ChatMessage) => {
-            setMessages(prev => prev.map(m => m._id === updated._id ? updated : m))
+        const onMessageEdited = async (updated: ChatMessage) => {
+            const decryptedMsg = await decryptIncomingMessage(updated)
+            setMessages(prev => prev.map(m => m._id === updated._id ? decryptedMsg : m))
         }
 
         const onMessageDeleted = ({ messageId }: { messageId: string }) => {
@@ -803,11 +1386,11 @@ const ChatInner = () => {
         }
 
         const onMessageReacted = (updated: ChatMessage) => {
-            setMessages(prev => prev.map(m => m._id === updated._id ? updated : m))
+            setMessages(prev => prev.map(m => m._id === updated._id ? { ...m, reactions: updated.reactions } : m))
         }
 
         const onMessageStatusUpdated = (updated: ChatMessage) => {
-            setMessages(prev => prev.map(m => m._id === updated._id ? updated : m))
+            setMessages(prev => prev.map(m => m._id === updated._id ? { ...m, delivery: updated.delivery, seenBy: updated.seenBy } : m))
         }
 
         const onError = (error: { event: string, message: string }) => {
@@ -853,7 +1436,7 @@ const ChatInner = () => {
     }
 
     // ── Send message via socket ───────────────────────────────────────────
-    const sendMessageHandler = useCallback(() => {
+    const sendMessageHandler = useCallback(async () => {
         const text = input.trim()
         if (!text || !activeRoom) return
         const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId
@@ -861,13 +1444,24 @@ const ChatInner = () => {
             toast.error("Cannot send E2EE message: recipient not found")
             return
         }
-        socketSend({ recipientUserId, senderUserId: currentUserId, roomId: activeRoom._id, content: text, replyTo: replyingTo?._id })
+        
+        const replyToId = replyingTo?._id;
+        const oldReplyingTo = replyingTo;
+
         setInput('')
         setShowEmojiPicker(false)
         setReplyingTo(null)
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         if (typingTimer.current) clearTimeout(typingTimer.current)
         emitStopTyping(activeRoom._id)
+        
+        try {
+            await socketSend({ recipientUserId, senderUserId: currentUserId, roomId: activeRoom._id, content: text, replyTo: replyToId })
+        } catch (err) {
+            toast.error("Failed to send message")
+            setInput(text)
+            setReplyingTo(oldReplyingTo)
+        }
     }, [input, activeRoom, replyingTo, currentUserId])
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -904,6 +1498,66 @@ const ChatInner = () => {
             if (fileInputRef.current) fileInputRef.current.value = ''
         }
     }
+
+    // ── Handle Audio Send ─────────────────────────────────────────────────
+    const handleAudioSend = useCallback(async (blob: Blob, durationMs: number) => {
+        if (!activeRoom) return;
+        const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!recipientUserId) {
+            toast.error("Cannot send: recipient not found");
+            return;
+        }
+        setSendingAudio(true);
+        setIsAudioRecorderOpen(false);
+        try {
+            // 1. Encrypt the audio blob client-side
+            const rawBytes = new Uint8Array(await blob.arrayBuffer());
+            const { encryptedBlob, blobKeyB64, blobNonceB64 } = await encryptBlob(rawBytes);
+
+            // 2. Upload the encrypted blob to the file service
+            const encryptedFile = new File([encryptedBlob], 'voice.enc', { type: 'application/octet-stream' });
+            const res = await uploadFile(encryptedFile);
+
+            // 3. Send the message with encrypted metadata via the E2EE ratchet
+            await sendAudioMessage({
+                recipientUserId,
+                senderUserId: currentUserId,
+                roomId: activeRoom._id,
+                encryptedBlobUrl: res.url,
+                blobKeyB64,
+                blobNonceB64,
+                fileSize: encryptedBlob.length,
+                durationMs,
+            });
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err.message || "Unknown error";
+            toast.error("Failed to send voice message: " + msg);
+        } finally {
+            setSendingAudio(false);
+        }
+    }, [activeRoom, currentUserId]);
+
+    // ── Handle Forward ────────────────────────────────────────────────────
+    const handleForward = useCallback(async (targetRoom: Room) => {
+        if (!forwardingMessage) return;
+        const recipientUserId = targetRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!recipientUserId) {
+            toast.error("Cannot forward: recipient not found");
+            return;
+        }
+        try {
+            await forwardMessage({
+                recipientUserId,
+                senderUserId: currentUserId,
+                targetRoomId: targetRoom._id,
+                originalMessage: forwardingMessage,
+            });
+            toast.success("Message forwarded!");
+            setForwardingMessage(null);
+        } catch (err: any) {
+            toast.error("Failed to forward message");
+        }
+    }, [forwardingMessage, currentUserId]);
 
     // ── Load older messages on scroll to top ──────────────────────────────
     const handleScroll = useCallback(async (e: React.UIEvent<HTMLDivElement>) => {
@@ -983,6 +1637,22 @@ const ChatInner = () => {
                             setActiveRoom(null)
                             setShowGroupInfo(false)
                         }}
+                    />
+                )}
+                {isAudioRecorderOpen && (
+                    <AudioRecorderModal
+                        onClose={() => setIsAudioRecorderOpen(false)}
+                        onSend={handleAudioSend}
+                    />
+                )}
+                {forwardingMessage && (
+                    <ForwardModal
+                        message={forwardingMessage}
+                        rooms={rooms}
+                        profiles={profiles}
+                        currentUserId={currentUserId}
+                        onClose={() => setForwardingMessage(null)}
+                        onForward={handleForward}
                     />
                 )}
             </AnimatePresence>
@@ -1134,6 +1804,7 @@ const ChatInner = () => {
                                                         isMine={msg.senderId === currentUserId} 
                                                         currentUserId={currentUserId}
                                                         onReply={() => setReplyingTo(msg)}
+                                                        onForward={() => setForwardingMessage(msg)}
                                                         replyTarget={targetMsg}
                                                         replyTargetName={targetName}
                                                         onReact={(emoji) => {
@@ -1206,12 +1877,11 @@ const ChatInner = () => {
                                     style={{ clipPath: CLIP_INPUT, minHeight: '48px', height: 'auto' }}
                                 />
                                 <button
-                                    onClick={sendMessageHandler}
-                                    disabled={!input.trim()}
+                                    onClick={() => input.trim() ? sendMessageHandler() : setIsAudioRecorderOpen(true)}
                                     style={{ clipPath: CLIP_BTN }}
-                                    className='h-12 w-12 flex-shrink-0 bg-[#ff4d00] flex items-center justify-center text-white transition-opacity disabled:opacity-30 hover:bg-[#e04500] active:scale-95'
+                                    className={`h-12 w-12 flex-shrink-0 flex items-center justify-center text-white transition-opacity hover:bg-[#e04500] active:scale-95 ${input.trim() ? 'bg-[#ff4d00]' : 'bg-[#ff4d00]/80'}`}
                                 >
-                                    <Send size={18} />
+                                    {input.trim() ? <Send size={18} /> : <Mic size={18} />}
                                 </button>
                             </div>
                         </>

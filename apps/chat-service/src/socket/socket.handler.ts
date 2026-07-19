@@ -59,6 +59,7 @@ export const initSocketHandler = (httpServer: HttpServer) => {
             deviceCiphertexts?: Record<string, any>;
             attachments?: { url: string; contentType: string; fileSize: number }[];
             replyTo?: string;
+            forwardedFrom?: { originalSenderId: string; originalRoomId: string; originalMessageId: string; originalTimestamp: Date };
         }) => {
             try {
                 logger.info('Sending message', { userId: socket.data.userId, roomId: data.roomId });
@@ -69,7 +70,8 @@ export const initSocketHandler = (httpServer: HttpServer) => {
                     data.content,
                     data.deviceCiphertexts,
                     data.attachments,
-                    data.replyTo
+                    data.replyTo,
+                    data.forwardedFrom
                 );
                 io.to(data.roomId).emit('newMessage', message);
                 logger.info('Message sent successfully', { userId: socket.data.userId, roomId: data.roomId, messageId: message.id });

@@ -81,6 +81,15 @@ const messageSchema = new mongoose.Schema({
         of: String,
         default: {}
     },
+    forwardedFrom: {
+        type: {
+            originalSenderId: { type: String, required: true },
+            originalRoomId: { type: String, required: true },
+            originalMessageId: { type: String, required: true },
+            originalTimestamp: { type: Date, required: true }
+        },
+        default: null
+    },
     delivery: {
         targetDevices: { type: [String], default: [] },
         deliveredDevices: { type: [String], default: [] },

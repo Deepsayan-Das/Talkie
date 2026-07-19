@@ -1,5 +1,6 @@
 import { DBSchema, IDBPDatabase, openDB } from "idb"
 import { RatchetSession } from "../crypto/dhratchet";
+import type { ChatMessage, Room } from "../chat";
 
 interface IdentityKeyRecord {
     deviceId: string,
@@ -51,6 +52,15 @@ interface TalkieDB extends DBSchema {
     signedPrekeys: {
         key: string,
         value: SignedPrekeyRecord
+    },
+    messages_cache: {
+        key: string,
+        value: ChatMessage,
+        indexes: { 'by-room': string, 'by-createdAt': string }
+    },
+    rooms_cache: {
+        key: string,
+        value: Room
     }
 }
 
@@ -67,6 +77,11 @@ interface SecureStoreInterface {
     pruneUsedOneTimePrekeys: (activeKeyIds: number[]) => Promise<void>
     setSignedPrekey: (deviceId: string, value: SignedPrekeyRecord) => Promise<void>
     getSignedPrekey: (deviceId: string) => Promise<SignedPrekeyRecord | null>
+    getCachedMessage(messageId: string): Promise<ChatMessage | null>;
+    setCachedMessage(msg: ChatMessage): Promise<void>;
+    getCachedMessagesForRoom(roomId: string): Promise<ChatMessage[]>;
+    getCachedRooms(): Promise<Room[]>;
+    setCachedRooms(rooms: Room[]): Promise<void>;
 }
 
 class SecureStore implements SecureStoreInterface {
@@ -91,6 +106,14 @@ class SecureStore implements SecureStoreInterface {
                     }
                     if (!db.objectStoreNames.contains("signedPrekeys")) {
                         db.createObjectStore("signedPrekeys")
+                    }
+                    if (!db.objectStoreNames.contains("messages_cache")) {
+                        const store = db.createObjectStore("messages_cache", { keyPath: '_id' });
+                        store.createIndex("by-room", "roomId");
+                        store.createIndex("by-createdAt", "createdAt");
+                    }
+                    if (!db.objectStoreNames.contains("rooms_cache")) {
+                        db.createObjectStore("rooms_cache", { keyPath: '_id' });
                     }
                 }
             }
@@ -180,6 +203,51 @@ class SecureStore implements SecureStoreInterface {
     async setSignedPrekey(deviceId: string, value: SignedPrekeyRecord): Promise<void> {
         const db = await this.getDB();
         await db.put("signedPrekeys", value, deviceId);
+    }
+
+    async getCachedMessage(messageId: string): Promise<ChatMessage | null> {
+        const db = await this.getDB();
+        const result = await db.get("messages_cache", messageId);
+        return result ?? null;
+    }
+
+    async setCachedMessage(msg: ChatMessage): Promise<void> {
+        const db = await this.getDB();
+        await db.put("messages_cache", msg);
+        
+        // Simple pruning: keep only latest 100 messages per room
+        const tx = db.transaction("messages_cache", "readwrite");
+        const index = tx.store.index("by-room");
+        const messages = await index.getAll(msg.roomId);
+        
+        if (messages.length > 100) {
+            messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            const toDelete = messages.slice(0, messages.length - 100);
+            await Promise.all(toDelete.map(m => tx.store.delete(m._id)));
+        }
+        await tx.done;
+    }
+
+    async getCachedMessagesForRoom(roomId: string): Promise<ChatMessage[]> {
+        const db = await this.getDB();
+        const index = db.transaction("messages_cache").store.index("by-room");
+        const messages = await index.getAll(roomId);
+        // Sort by createdAt desc (or asc depending on how we render, usually we reverse in page.tsx)
+        return messages.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+
+    async getCachedRooms(): Promise<Room[]> {
+        const db = await this.getDB();
+        const rooms = await db.getAll("rooms_cache");
+        return rooms.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    }
+
+    async setCachedRooms(rooms: Room[]): Promise<void> {
+        const db = await this.getDB();
+        const tx = db.transaction("rooms_cache", "readwrite");
+        await tx.store.clear();
+        await Promise.all(rooms.map(r => tx.store.put(r)));
+        await tx.done;
     }
 }
 

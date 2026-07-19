@@ -8,7 +8,8 @@ export const createMessage = async (
     deviceCiphertexts: Record<string, any> | undefined,
     attachments: { url: string, contentType: string, fileSize: number }[],
     targetDevices: string[] = [],
-    replyTo?: string
+    replyTo?: string,
+    forwardedFrom?: { originalSenderId: string, originalRoomId: string, originalMessageId: string, originalTimestamp: Date }
 ) => {
     return await Message.create({
         roomId,
@@ -18,6 +19,7 @@ export const createMessage = async (
         deviceCiphertexts,
         attachments,
         replyTo,
+        forwardedFrom: forwardedFrom || null,
         delivery: {
             targetDevices,
             deliveredDevices: [],

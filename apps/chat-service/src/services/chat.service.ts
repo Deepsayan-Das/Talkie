@@ -163,7 +163,8 @@ export const sendMessage = async (
     content: string | undefined,
     deviceCiphertexts: Record<string, any> | undefined,
     attachments?: { url: string, contentType: string, fileSize: number }[],
-    replyTo?: string
+    replyTo?: string,
+    forwardedFrom?: { originalSenderId: string, originalRoomId: string, originalMessageId: string, originalTimestamp: Date }
 ) => {
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) {
@@ -192,7 +193,8 @@ export const sendMessage = async (
         deviceCiphertexts,
         attachments || [],
         targetDevices,
-        replyTo
+        replyTo,
+        forwardedFrom
     );
     return message;
 }

@@ -51,7 +51,8 @@ export async function sendMessage(payload: {
     roomId: string,
     content: string,
     attachments?: { url: string; contentType: string; fileSize: number }[],
-    replyTo?: string
+    replyTo?: string,
+    forwardedFrom?: { originalSenderId: string; originalRoomId: string; originalMessageId: string; originalTimestamp: Date }
 }): Promise<void> {
     const myDeviceId = getOrCreateDeviceId();
 
@@ -95,7 +96,73 @@ export async function sendMessage(payload: {
         deviceCiphertexts,
         attachments: payload.attachments,
         replyTo: payload.replyTo,
+        forwardedFrom: payload.forwardedFrom,
     })
+}
+
+// ─── Audio message helper ─────────────────────────────────────────────────────
+// The audio blob is encrypted client-side via encryptBlob. The symmetric key
+// is embedded in the E2EE-encrypted content field so it travels through the
+// existing ratchet, maintaining E2EE for the audio data.
+export async function sendAudioMessage(payload: {
+    recipientUserId: string,
+    senderUserId: string,
+    roomId: string,
+    encryptedBlobUrl: string,
+    blobKeyB64: string,
+    blobNonceB64: string,
+    fileSize: number,
+    durationMs: number,
+}): Promise<void> {
+    // The content field carries the decryption metadata as JSON.
+    // This content is itself encrypted by the ratchet (E2EE).
+    const contentPayload = JSON.stringify({
+        type: 'audio',
+        blobKey: payload.blobKeyB64,
+        blobNonce: payload.blobNonceB64,
+        durationMs: payload.durationMs,
+    });
+
+    await sendMessage({
+        recipientUserId: payload.recipientUserId,
+        senderUserId: payload.senderUserId,
+        roomId: payload.roomId,
+        content: contentPayload,
+        attachments: [{
+            url: payload.encryptedBlobUrl,
+            contentType: 'audio/webm',
+            fileSize: payload.fileSize,
+        }],
+    });
+}
+
+// ─── Forward message helper ───────────────────────────────────────────────────
+export async function forwardMessage(payload: {
+    recipientUserId: string,
+    senderUserId: string,
+    targetRoomId: string,
+    originalMessage: {
+        _id: string,
+        senderId: string,
+        roomId: string,
+        content: string,
+        createdAt: string,
+        attachments?: { url: string; contentType: string; fileSize: number }[],
+    }
+}): Promise<void> {
+    await sendMessage({
+        recipientUserId: payload.recipientUserId,
+        senderUserId: payload.senderUserId,
+        roomId: payload.targetRoomId,
+        content: payload.originalMessage.content,
+        attachments: payload.originalMessage.attachments,
+        forwardedFrom: {
+            originalSenderId: payload.originalMessage.senderId,
+            originalRoomId: payload.originalMessage.roomId,
+            originalMessageId: payload.originalMessage._id,
+            originalTimestamp: new Date(payload.originalMessage.createdAt),
+        },
+    });
 }
 
 export function emitTyping(roomId: string): void {

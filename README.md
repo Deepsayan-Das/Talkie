@@ -658,14 +658,14 @@ To evolve Talkie from a functional chat app into a fully-featured, production-re
 - [ ] **End-to-End Encryption (E2EE):** Implement the Signal Protocol (or similar) on the client side so backend servers cannot read message contents. (In Progress)
 - [x] **Read Receipts & Delivery Status:** Implemented robust double gray ticks (delivered) and double blue ticks (read) that sync perfectly across multiple devices.
 - [ ] **Voice & Video Calls:** Integrate WebRTC for peer-to-peer real-time audio and video communications.
-- [ ] **Voice Notes / Audio Messages:** Allow users to record and send audio directly inside the chat interface.
+- [x] **Voice Notes / Audio Messages:** Allow users to record and send audio directly inside the chat interface.
 - [x] **Message Replies / Quotes:** UI support to swipe/click to reply to specific messages and render the quoted bubble.
 - [x] **Message Reactions:** Long-press or hover over a message to attach emoji reactions.
 - [x] **Online / Last Seen Status:** A robust connection state tracker using Redis presence sets and RabbitMQ offline events to show exact offline times and accurate "last seen at X" timestamps.
-- [ ] **Push Notifications:** Integrate Firebase Cloud Messaging (FCM) or Apple Push Notifications to deliver messages when the app is closed.
+- [-] **Push Notifications:** Integrate Firebase Cloud Messaging (FCM) or Apple Push Notifications to deliver messages when the app is closed.
 - [ ] **Status / Stories:** Support for 24-hour disappearing photo/video/text updates.
-- [ ] **Message Forwarding:** Seamlessly forward messages to other chats.
-- [ ] **Client-side Offline Persistence:** Save chats to a local database (like IndexedDB) so the UI loads instantly without network requests, mimicking native mobile apps.
+- [x] **Message Forwarding:** Seamlessly forward messages to other chats.
+- [x] **Client-side Offline Persistence (Cache-First UX):** Leveraged IndexedDB (`idb`) to locally cache full `ChatMessage` and `Room` objects. Implemented a cache-first rendering strategy where the UI paints instantly from the local database on mount or room-open, while network requests run in the background to silently reconcile fresh metadata (like reactions or read receipts). Includes deterministic in-memory array-sorting pruning to cap storage size.
 
 ---
 
