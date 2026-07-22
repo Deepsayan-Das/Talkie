@@ -2,26 +2,14 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { JetBrains_Mono, Anybody } from 'next/font/google'
 import { Search, X, UserPlus, MessageCircle, ArrowLeft, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { searchUsers } from '@/lib/user'
-import { sendBuddyRequest } from '@/lib/user'
+import { searchUsers, sendBuddyRequest } from '@/lib/user'
+import { createRoom } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
-
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['400', '600', '700', '800'] })
-const anybody = Anybody({ subsets: ['latin'], weight: ['300', '400', '600'] })
-
-const CLIP_SM = 'polygon(8px 0%, 100% 0%, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0% 100%, 0% 8px)'
-const CLIP_LG = 'polygon(14px 0%, 100% 0%, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0% 100%, 0% 14px)'
-
-const AVATAR_COLORS = ['#ff4d00', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4']
-
-function avatarColor(s: string) {
-    let h = 0
-    for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h)
-    return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]
-}
+import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 
 export default function SearchPage() {
     const router = useRouter()
@@ -36,7 +24,6 @@ export default function SearchPage() {
         setLoading(true)
         try {
             const data = await searchUsers(q)
-            // API may return a single object or array — normalise
             setResults(Array.isArray(data) ? data : [data])
         } catch {
             setResults([])
@@ -61,110 +48,100 @@ export default function SearchPage() {
         }
     }
 
+    const handleMessage = async (userId: string) => {
+        try {
+            const room = await createRoom({ kind: 'dm', members: [userId] })
+            router.push(`/chat?room=${room._id}`)
+        } catch {
+            toast.error('Failed to start conversation')
+        }
+    }
+
     return (
-        <div className={`min-h-screen w-full bg-[#131313] flex flex-col items-center pt-12 px-4 pb-10 ${jetbrains.className}`}>
+        <div className="min-h-screen w-full bg-[#080808] text-neutral-100 flex flex-col items-center pt-8 px-4 pb-12">
+            <div className="w-full max-w-2xl flex flex-col gap-6">
+                <button
+                    onClick={() => router.back()}
+                    className="self-start flex items-center gap-2 text-xs font-mono text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                >
+                    <ArrowLeft size={16} />
+                    <span>Back</span>
+                </button>
 
-            <button
-                onClick={() => router.back()}
-                className='self-start ml-4 mb-8 flex items-center gap-2 text-[#666] hover:text-[#ff4d00] transition-colors text-sm'
-            >
-                <ArrowLeft size={16} />
-                <span className={anybody.className}>Back</span>
-            </button>
+                <div className="flex flex-col gap-1 border-b border-[#27272a] pb-4 text-left">
+                    <h1 className="text-2xl font-bold tracking-tight text-neutral-100">
+                        Search Directory
+                    </h1>
+                    <p className="text-xs text-neutral-400">
+                        Find people by name or username.
+                    </p>
+                </div>
 
-            <div className='w-full max-w-2xl flex flex-col gap-4'>
-                <h1 className='text-3xl font-black text-white tracking-tight'>SEARCH</h1>
-
-                <div className='relative' style={{ clipPath: CLIP_LG }}>
-                    <Search size={16} className='absolute left-4 top-1/2 -translate-y-1/2 text-[#555] pointer-events-none' />
-                    <input
+                <div className="relative">
+                    <Input
                         autoFocus
-                        type='text'
+                        placeholder="Search by name or @username..."
                         value={query}
                         onChange={e => setQuery(e.target.value)}
-                        placeholder='Search by name or username…'
-                        className='w-full bg-[#252525] text-white placeholder-[#555] pl-10 pr-10 py-4 text-sm focus:outline-none border-2 border-[#353535] focus:border-[#ff4d00] transition-colors'
+                        leftElement={<Search className="w-4 h-4 text-neutral-500" />}
+                        rightElement={
+                            query ? (
+                                <button onClick={() => setQuery('')} className="text-neutral-500 hover:text-white cursor-pointer p-1">
+                                    <X size={14} />
+                                </button>
+                            ) : undefined
+                        }
                     />
-                    {query && (
-                        <button onClick={() => setQuery('')} className='absolute right-4 top-1/2 -translate-y-1/2 text-[#555] hover:text-white'>
-                            <X size={14} />
-                        </button>
-                    )}
                 </div>
 
-                <div className='flex gap-1 border-b-2 border-[#2a2a2a]'>
-                    <button className='px-4 py-2 text-xs font-bold uppercase tracking-widest border-b-2 -mb-0.5 border-[#ff4d00] text-[#ff4d00]'>
-                        People
-                    </button>
-                </div>
-
-                <div className='flex flex-col gap-2'>
+                <div className="flex flex-col gap-2 text-left">
                     {loading ? (
-                        <div className='flex justify-center py-16'>
-                            <Loader2 size={24} className='animate-spin text-[#ff4d00]' />
+                        <div className="flex justify-center py-16">
+                            <Loader2 size={24} className="animate-spin text-neutral-400" />
                         </div>
                     ) : !query.trim() ? (
-                        <div className={`text-center py-16 text-[#444] ${anybody.className}`}>
-                            <p className='text-base'>Type to search for people</p>
+                        <div className="text-center py-16 text-neutral-500 font-mono text-xs border border-dashed border-[#27272a] rounded-sm">
+                            <p>Type a handle or name to start searching</p>
                         </div>
                     ) : results.length === 0 ? (
-                        <div className={`text-center py-16 text-[#444] ${anybody.className}`}>
-                            <p className='text-lg'>No results for &ldquo;{query}&rdquo;</p>
-                            <p className='text-sm mt-1 font-light'>Try a different name or username</p>
+                        <div className="text-center py-16 text-neutral-500 font-mono text-xs border border-dashed border-[#27272a] rounded-sm">
+                            <p>No matches found for "{query}"</p>
                         </div>
                     ) : results.map(person => (
                         <div
                             key={person.id}
-                            className='flex items-center gap-4 bg-[#1c1c1c] border-2 border-[#2a2a2a] hover:border-[#353535] p-4 transition-colors cursor-pointer'
-                            style={{ clipPath: CLIP_SM }}
-                            onClick={() => router.push(`/profile/${person.id}`)}
+                            className="flex items-center justify-between bg-[#121212] border border-[#27272a] p-4 rounded-sm hover:border-neutral-700 transition-colors"
                         >
-                            <div className='relative flex-shrink-0'>
+                            <div className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer" onClick={() => router.push(`/profile/${person.id}`)}>
                                 {person.avatar ? (
                                     // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={person.avatar} alt={person.displayName} className='w-12 h-12 rounded-full object-cover' />
+                                    <img src={person.avatar} alt={person.displayName} className="w-10 h-10 rounded-full object-cover border border-neutral-700 shrink-0" />
                                 ) : (
-                                    <div
-                                        className='w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-base'
-                                        style={{ backgroundColor: avatarColor(person.username) }}
-                                    >
-                                        {person.displayName[0].toUpperCase()}
+                                    <div className="w-10 h-10 rounded-full bg-neutral-800 text-white font-bold text-sm flex items-center justify-center border border-neutral-700 shrink-0">
+                                        {person.displayName[0]?.toUpperCase()}
                                     </div>
                                 )}
-                                {person.isOnline && (
-                                    <span className='absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-[#1c1c1c]' />
-                                )}
-                            </div>
 
-                            <div className='flex-1 min-w-0'>
-                                <div className='flex items-baseline gap-2'>
-                                    <p className='text-white font-bold text-sm'>{person.displayName}</p>
-                                    <p className='text-[#555] text-xs'>@{person.username}</p>
+                                <div className="flex flex-col text-left truncate">
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-bold text-sm text-neutral-100 hover:underline">{person.displayName}</span>
+                                        {person.isOnline && <Badge variant="active" dot>Online</Badge>}
+                                    </div>
+                                    <span className="font-mono text-xs text-neutral-500">@{person.username}</span>
+                                    {person.bio && <p className="text-xs text-neutral-400 truncate mt-0.5">{person.bio}</p>}
                                 </div>
-                                {person.bio && <p className={`text-[#777] text-xs mt-0.5 truncate ${anybody.className} font-light`}>{person.bio}</p>}
                             </div>
 
-                            <div className='flex gap-2 flex-shrink-0' onClick={e => e.stopPropagation()}>
-                                <button
-                                    title='Send message'
-                                    className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-[#ff4d00] transition-colors'
-                                    style={{ clipPath: CLIP_SM }}
-                                >
-                                    <MessageCircle size={14} />
-                                </button>
+                            <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                                <Button variant="secondary" size="sm" onClick={() => handleMessage(person.id)} leftIcon={<MessageCircle size={14} />}>
+                                    CHAT
+                                </Button>
                                 {requested.has(person.id) ? (
-                                    <span className={`px-2 h-8 flex items-center text-[10px] font-bold text-[#ff4d00] bg-[#ff4d00]/10 ${anybody.className}`}>
-                                        SENT
-                                    </span>
+                                    <Badge variant="mono">REQUEST SENT</Badge>
                                 ) : (
-                                    <button
-                                        title='Add buddy'
-                                        onClick={() => handleAdd(person.id)}
-                                        className='w-8 h-8 flex items-center justify-center bg-[#ff4d00] text-white hover:bg-[#e04500] transition-colors'
-                                        style={{ clipPath: CLIP_SM }}
-                                    >
-                                        <UserPlus size={14} />
-                                    </button>
+                                    <Button variant="primary" size="sm" onClick={() => handleAdd(person.id)} leftIcon={<UserPlus size={14} />}>
+                                        ADD
+                                    </Button>
                                 )}
                             </div>
                         </div>

@@ -59,7 +59,6 @@ export async function sendMessage(payload: {
         socket?.emit('sendMessage', {
             roomId: payload.roomId,
             content: payload.content,
-            deviceCiphertexts: {},
             attachments: payload.attachments,
             replyTo: payload.replyTo,
             forwardedFrom: payload.forwardedFrom,

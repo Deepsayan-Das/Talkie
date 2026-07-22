@@ -2,22 +2,21 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { motion, AnimatePresence } from 'framer-motion'
-import { JetBrains_Mono, Anybody } from 'next/font/google'
+import { motion, AnimatePresence } from 'motion/react'
 import { Play, MessageSquare, Search, Users, Settings, UserCircle, Plus, X, Loader2, Image as ImageIcon, Type, Trash2, Camera, Clock } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { useAuth } from '@/context/AuthContext'
 import { getStoryFeed, createStory, deleteStory, StoryFeedEntry, Story } from '@/lib/stories'
 import { uploadFile, getUserProfile, UserProfile } from '@/lib/user'
-
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '400', '600', '800'] })
-const anybody = Anybody({ subsets: ['latin'], weight: ['300', '400', '600', '800'] })
+import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
+import { Badge } from '@/components/ui/Badge'
 
 const StoryUploadModal = ({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) => {
     const [type, setType] = useState<'text' | 'photo' | 'video'>('photo')
     const [content, setContent] = useState('')
-    const [bg, setBg] = useState('#ff4d00')
+    const [bg, setBg] = useState('#121212')
     const [file, setFile] = useState<File | null>(null)
     const [previewUrl, setPreviewUrl] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
@@ -28,7 +27,7 @@ const StoryUploadModal = ({ onClose, onSuccess }: { onClose: () => void, onSucce
         if (!f) return
         setFile(f)
         const url = URL.createObjectURL(f)
-        if (previewUrl) URL.revokeObjectURL(previewUrl)
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(url)
     }
 
@@ -60,22 +59,15 @@ const StoryUploadModal = ({ onClose, onSuccess }: { onClose: () => void, onSucce
     }
 
     return (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[200] flex flex-col">
-            <div className="p-6 flex justify-between items-center">
-                <h2 className={`text-2xl font-black text-white ${anybody.className}`}>NEW STORY</h2>
-                <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors">
-                    <X size={24} />
-                </button>
-            </div>
-            
-            <div className="flex-1 flex flex-col md:flex-row p-6 gap-8 overflow-y-auto items-center justify-center">
-                <div className="flex flex-col gap-4 w-full max-w-sm">
-                    <div className="flex bg-[#252525] p-1 rounded-xl">
+        <Modal isOpen={true} onClose={onClose} title="Create Story" maxWidth="lg">
+            <div className="flex flex-col md:flex-row gap-6 items-center">
+                <div className="flex flex-col gap-4 w-full text-left">
+                    <div className="flex bg-[#18181b] border border-[#27272a] p-1 rounded-sm">
                         {(['photo', 'video', 'text'] as const).map(t => (
                             <button 
                                 key={t} 
                                 onClick={() => { setType(t); setFile(null); setPreviewUrl(null); }}
-                                className={`flex-1 py-3 text-sm font-bold capitalize transition-colors rounded-lg ${type === t ? 'bg-[#ff4d00] text-white shadow-lg' : 'text-[#888] hover:text-white'}`}
+                                className={`flex-1 py-2 text-xs font-semibold capitalize transition-colors rounded-xs cursor-pointer ${type === t ? 'bg-white text-black font-bold' : 'text-neutral-400 hover:text-white'}`}
                             >
                                 {t}
                             </button>
@@ -83,13 +75,13 @@ const StoryUploadModal = ({ onClose, onSuccess }: { onClose: () => void, onSucce
                     </div>
 
                     {type === 'text' && (
-                        <div className="flex flex-col gap-4 mt-4">
-                            <label className="text-[#888] font-bold text-xs uppercase tracking-widest">Background Color</label>
-                            <div className="flex gap-3">
-                                {['#ff4d00', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#000000'].map(c => (
+                        <div className="flex flex-col gap-2">
+                            <label className="text-xs font-medium text-neutral-300">Background Shading</label>
+                            <div className="flex gap-2">
+                                {['#121212', '#18181b', '#27272a', '#3f3f46', '#000000'].map(c => (
                                     <button 
                                         key={c} onClick={() => setBg(c)} 
-                                        className={`w-10 h-10 rounded-full border-4 transition-transform ${bg === c ? 'border-white scale-110' : 'border-transparent'}`} 
+                                        className={`w-8 h-8 rounded-full border-2 transition-transform cursor-pointer ${bg === c ? 'border-white scale-110' : 'border-transparent'}`} 
                                         style={{ backgroundColor: c }} 
                                     />
                                 ))}
@@ -98,53 +90,58 @@ const StoryUploadModal = ({ onClose, onSuccess }: { onClose: () => void, onSucce
                     )}
 
                     {(type === 'photo' || type === 'video') && (
-                        <div className="flex flex-col gap-4 mt-4">
+                        <div className="flex flex-col gap-2">
                             <input type="file" ref={fileRef} accept={type === 'photo' ? 'image/*' : 'video/*'} className="hidden" onChange={handleFile} />
-                            <button 
+                            <Button 
+                                variant="secondary"
+                                size="md"
                                 onClick={() => fileRef.current?.click()}
-                                className="w-full bg-[#353535] hover:bg-[#454545] text-white py-4 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
+                                leftIcon={<Camera size={16} />}
                             >
-                                <Camera size={20} /> Select {type}
-                            </button>
+                                Choose {type} File
+                            </Button>
                         </div>
                     )}
 
-                    <motion.button 
-                        whileTap={{ scale: 0.95 }} 
+                    <Button 
+                        variant="primary"
+                        size="lg"
                         onClick={handleSubmit} 
-                        disabled={loading || (type === 'text' && !content) || (type !== 'text' && !file)}
-                        className="w-full mt-auto md:mt-8 bg-[#ff4d00] text-white py-4 rounded-xl font-black text-lg shadow-lg shadow-[#ff4d00]/30 disabled:opacity-50 disabled:shadow-none transition-all"
+                        isLoading={loading}
+                        disabled={(type === 'text' && !content) || (type !== 'text' && !file)}
+                        className="mt-4"
                     >
-                        {loading ? <Loader2 size={24} className="animate-spin mx-auto" /> : 'POST TO STORY'}
-                    </motion.button>
+                        POST STORY
+                    </Button>
                 </div>
 
-                {/* Preview */}
-                <div className="w-[300px] h-[533px] bg-[#1c1c1c] rounded-[2rem] border-8 border-[#353535] overflow-hidden flex flex-col items-center justify-center relative shadow-2xl flex-shrink-0">
+                {/* Preview Box */}
+                <div className="w-56 h-96 bg-[#121212] rounded-sm border border-[#27272a] overflow-hidden flex flex-col items-center justify-center relative shadow-xl shrink-0">
                     {type === 'text' ? (
-                        <div className="w-full h-full flex items-center justify-center p-6 text-center transition-colors duration-500" style={{ backgroundColor: bg }}>
+                        <div className="w-full h-full flex items-center justify-center p-4 text-center transition-colors" style={{ backgroundColor: bg }}>
                             <textarea 
                                 value={content} 
                                 onChange={e => setContent(e.target.value)} 
-                                placeholder="Type something..." 
-                                className={`bg-transparent text-white text-3xl font-bold text-center outline-none resize-none w-full h-full pt-[40%] ${anybody.className} placeholder-white/30`} 
+                                placeholder="Type text..." 
+                                className="bg-transparent text-white text-lg font-semibold text-center outline-none resize-none w-full h-full pt-[35%] placeholder-neutral-600" 
                             />
                         </div>
                     ) : previewUrl ? (
                         type === 'photo' ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
                         ) : (
                             <video src={previewUrl} className="w-full h-full object-cover" autoPlay loop muted />
                         )
                     ) : (
-                        <div className="text-[#555] flex flex-col items-center gap-2">
-                            {type === 'photo' ? <ImageIcon size={48} /> : <Type size={48} />}
-                            <span className="font-bold">Preview</span>
+                        <div className="text-neutral-500 flex flex-col items-center gap-2 font-mono text-xs">
+                            {type === 'photo' ? <ImageIcon size={32} /> : <Type size={32} />}
+                            <span>PREVIEW</span>
                         </div>
                     )}
                 </div>
             </div>
-        </div>
+        </Modal>
     )
 }
 
@@ -157,10 +154,6 @@ const StoryViewer = ({ feed, initialUserIdx, profiles, onClose, onDelete, curren
     const activeStory = activeUser.stories[storyIdx]
     const isMine = activeUser._id === currentUserId
     const profile = profiles[activeUser._id]
-    
-    const [showViewers, setShowViewers] = useState(false)
-    const [viewers, setViewers] = useState<{ userId: string, viewedAt: string }[]>([])
-    const [viewersLoading, setViewersLoading] = useState(false)
 
     useEffect(() => {
         if (!isMine) {
@@ -172,13 +165,11 @@ const StoryViewer = ({ feed, initialUserIdx, profiles, onClose, onDelete, curren
         setProgress(0)
         let frame: number
         let start = performance.now()
-        // 5 seconds per story
         const duration = 5000 
         
         const tick = (now: number) => {
             const elap = now - start
             if (elap >= duration) {
-                // next story
                 if (storyIdx < activeUser.stories.length - 1) {
                     setStoryIdx(s => s + 1)
                 } else if (userIdx < feed.length - 1) {
@@ -206,35 +197,13 @@ const StoryViewer = ({ feed, initialUserIdx, profiles, onClose, onDelete, curren
         else if (userIdx > 0) { setUserIdx(u => u - 1); setStoryIdx(feed[userIdx - 1].stories.length - 1) }
     }
 
-    const handleViewersClick = async (e: React.MouseEvent) => {
-        e.stopPropagation();
-        setShowViewers(true);
-        setViewersLoading(true);
-        try {
-            const m = await import('@/lib/stories');
-            const data = await m.getStoryViewers(activeStory._id);
-            setViewers(data);
-            
-            const { getUserProfile } = await import('@/lib/user');
-            for (const v of data) {
-                if (!profiles[v.userId]) {
-                    try { profiles[v.userId] = await getUserProfile(v.userId); } catch {}
-                }
-            }
-        } catch (err) {
-            import('react-hot-toast').then(m => m.default.error("Failed to load viewers"));
-        } finally {
-            setViewersLoading(false);
-        }
-    }
-
     return (
         <div className="fixed inset-0 bg-black/95 z-[300] flex items-center justify-center">
             <div className="absolute top-0 left-0 w-full h-full" onClick={handleNext}></div>
             <div className="absolute top-0 left-0 w-[30%] h-full z-10" onClick={(e) => { e.stopPropagation(); handlePrev(); }}></div>
             <div className="absolute top-0 right-0 w-[30%] h-full z-10" onClick={(e) => { e.stopPropagation(); handleNext(); }}></div>
 
-            <div className="w-full max-w-[400px] h-[100dvh] md:h-[80vh] md:rounded-[2rem] bg-[#1c1c1c] relative overflow-hidden flex flex-col items-center justify-center shadow-2xl z-20">
+            <div className="w-full max-w-sm h-[90vh] bg-[#121212] border border-[#27272a] rounded-sm relative overflow-hidden flex flex-col items-center justify-center shadow-2xl z-20">
                 {/* Progress bars */}
                 <div className="absolute top-4 left-4 right-4 flex gap-1 z-30">
                     {activeUser.stories.map((s, i) => (
@@ -249,23 +218,30 @@ const StoryViewer = ({ feed, initialUserIdx, profiles, onClose, onDelete, curren
 
                 {/* Header */}
                 <div className="absolute top-8 left-4 right-4 flex justify-between items-center z-30">
-                    <div className="flex items-center gap-3">
-                        <img src={profile?.avatar || 'https://via.placeholder.com/40'} alt="avatar" className="w-10 h-10 rounded-full object-cover border-2 border-white" />
-                        <div className="flex flex-col drop-shadow-md">
-                            <span className="text-white font-bold">{isMine ? 'Your Story' : (profile?.displayName || 'Unknown')}</span>
-                            <span className="text-white/70 text-[10px] uppercase font-bold tracking-wider">
+                    <div className="flex items-center gap-2.5">
+                        {profile?.avatar ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={profile.avatar} alt="avatar" className="w-8 h-8 rounded-full object-cover border border-white" />
+                        ) : (
+                            <div className="w-8 h-8 bg-neutral-800 text-white font-bold text-xs flex items-center justify-center rounded-full">
+                                {profile?.displayName?.[0]?.toUpperCase()}
+                            </div>
+                        )}
+                        <div className="flex flex-col text-left">
+                            <span className="text-white text-xs font-bold">{isMine ? 'Your Story' : (profile?.displayName || 'User')}</span>
+                            <span className="font-mono text-[9px] text-neutral-400">
                                 {new Date(activeStory.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
                         </div>
                     </div>
                     <div className="flex gap-2">
                         {isMine && (
-                            <button onClick={(e) => { e.stopPropagation(); onDelete(activeStory._id); }} className="p-2 bg-black/40 hover:bg-red-500 rounded-full text-white transition-colors">
-                                <Trash2 size={18} />
+                            <button onClick={(e) => { e.stopPropagation(); onDelete(activeStory._id); }} className="p-1.5 bg-black/60 hover:bg-red-500 rounded-sm text-white transition-colors cursor-pointer">
+                                <Trash2 size={16} />
                             </button>
                         )}
-                        <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors">
-                            <X size={18} />
+                        <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1.5 bg-black/60 hover:bg-white hover:text-black rounded-sm text-white transition-colors cursor-pointer">
+                            <X size={16} />
                         </button>
                     </div>
                 </div>
@@ -273,58 +249,18 @@ const StoryViewer = ({ feed, initialUserIdx, profiles, onClose, onDelete, curren
                 {/* Content */}
                 <div className="w-full h-full relative bg-black">
                     {activeStory.type === 'text' && (
-                        <div className="w-full h-full flex items-center justify-center p-8 text-center" style={{ backgroundColor: activeStory.backgroundColor || '#ff4d00' }}>
-                            <p className={`text-white text-3xl font-bold ${anybody.className}`}>{activeStory.content}</p>
+                        <div className="w-full h-full flex items-center justify-center p-8 text-center" style={{ backgroundColor: activeStory.backgroundColor || '#121212' }}>
+                            <p className="text-white text-2xl font-bold">{activeStory.content}</p>
                         </div>
                     )}
                     {activeStory.type === 'photo' && activeStory.mediaUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={activeStory.mediaUrl} alt="story" className="w-full h-full object-cover" />
                     )}
                     {activeStory.type === 'video' && activeStory.mediaUrl && (
                         <video src={activeStory.mediaUrl} className="w-full h-full object-cover" autoPlay />
                     )}
                 </div>
-
-                {/* Viewers (if mine) */}
-                {isMine && !showViewers && (
-                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 px-4 py-2 rounded-full backdrop-blur-md z-30 cursor-pointer hover:bg-black/80 transition-colors" onClick={handleViewersClick}>
-                        <Users size={16} className="text-white" />
-                        <span className="text-white text-xs font-bold">{Object.keys(activeStory.viewedBy || {}).length} views</span>
-                    </div>
-                )}
-
-                {/* Viewers List Modal */}
-                {showViewers && (
-                    <div className="absolute inset-0 bg-black/90 z-40 flex flex-col p-6" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className={`text-xl font-bold text-white ${anybody.className}`}>Viewers</h3>
-                            <button onClick={() => setShowViewers(false)} className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        
-                        {viewersLoading ? (
-                            <div className="flex-1 flex items-center justify-center"><Loader2 size={24} className="animate-spin text-[#ff4d00]" /></div>
-                        ) : viewers.length === 0 ? (
-                            <div className="flex-1 flex items-center justify-center text-[#888]">No viewers yet</div>
-                        ) : (
-                            <div className="flex-1 overflow-y-auto flex flex-col gap-4">
-                                {viewers.map(v => {
-                                    const p = profiles[v.userId]
-                                    return (
-                                        <div key={v.userId} className="flex items-center gap-4 bg-[#252525] p-3 rounded-xl border border-[#353535]">
-                                            <img src={p?.avatar || 'https://via.placeholder.com/40'} alt="avatar" className="w-10 h-10 rounded-full object-cover" />
-                                            <div className="flex flex-col">
-                                                <span className="text-white font-bold">{p?.displayName || 'Unknown'}</span>
-                                                <span className="text-[#888] text-xs">@{p?.username || v.userId} • {new Date(v.viewedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        )}
-                    </div>
-                )}
             </div>
         </div>
     )
@@ -353,7 +289,7 @@ export default function StoriesPage() {
                 }
             }
             setProfiles(profs)
-        } catch (err) {
+        } catch {
             toast.error("Failed to load stories")
         } finally {
             setLoading(false)
@@ -362,7 +298,6 @@ export default function StoriesPage() {
 
     useEffect(() => {
         if (currentUserId) fetchStories()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentUserId])
 
     const handleDelete = async (id: string) => {
@@ -372,7 +307,7 @@ export default function StoriesPage() {
             fetchStories()
             setActiveViewerIdx(null)
             toast.success("Story deleted")
-        } catch (err) {
+        } catch {
             toast.error("Failed to delete story")
         }
     }
@@ -382,105 +317,102 @@ export default function StoriesPage() {
     )
 
     return (
-        <div className="flex flex-col h-screen overflow-hidden bg-[#131313] md:flex-row">
-            {/* ── Left sidebar navigation for desktop ──────────────────────────────── */}
-            <div className='hidden md:flex h-full w-[23%] bg-[#252525] flex-col flex-shrink-0'>
-                <div className='h-32 border-b-2 border-[#353535] flex items-center px-8'>
-                    <h1 className={`text-3xl text-white font-black ${anybody.className}`}>STORIES</h1>
+        <div className="flex flex-col h-screen overflow-hidden bg-[#080808] md:flex-row">
+            {/* Sidebar Navigation */}
+            <div className="hidden md:flex h-full w-64 bg-[#121212] border-r border-[#27272a] flex-col shrink-0 p-6">
+                <div className="flex items-center gap-2 mb-6 border-b border-[#27272a] pb-4">
+                    <div className="w-6 h-6 bg-white text-black font-bold text-xs flex items-center justify-center rounded-xs">
+                        T
+                    </div>
+                    <span className="font-bold text-sm text-neutral-100 tracking-tight">
+                        STORIES
+                    </span>
                 </div>
-                <div className="flex flex-col p-4 gap-2">
-                    <p className={`text-xs text-[#888] font-bold uppercase tracking-widest mb-4 ${anybody.className}`}>Your Activity</p>
-                    <button 
-                        onClick={() => setIsUploadOpen(true)}
-                        className="flex items-center gap-4 bg-[#ff4d00]/10 hover:bg-[#ff4d00]/20 border-2 border-[#ff4d00] p-4 text-[#ff4d00] font-bold transition-all shadow-lg shadow-[#ff4d00]/10"
-                        style={{ clipPath: 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)' }}
-                    >
-                        <div className="w-10 h-10 rounded-full bg-[#ff4d00] flex items-center justify-center text-white">
-                            <Plus size={20} />
-                        </div>
-                        Add to Story
-                    </button>
-                </div>
+
+                <Button 
+                    variant="primary" 
+                    size="md" 
+                    onClick={() => setIsUploadOpen(true)}
+                    leftIcon={<Plus size={16} />}
+                >
+                    ADD TO STORY
+                </Button>
             </div>
 
-            {/* ── Main content area ─────────────────────────────────────────────── */}
-            <div className='h-full flex-1 bg-[#181818] flex flex-col overflow-y-auto pb-20 md:pb-0'>
-                
-                <div className="md:hidden p-6 pb-2">
-                    <h1 className={`text-3xl text-white font-black ${anybody.className}`}>STORIES</h1>
+            {/* Main Grid */}
+            <div className="h-full flex-1 bg-[#080808] flex flex-col overflow-y-auto p-6 sm:p-8">
+                <div className="flex items-center justify-between border-b border-[#27272a] pb-4 mb-6">
+                    <h1 className="text-xl font-bold text-neutral-100">
+                        Stories Directory
+                    </h1>
+                    <Button variant="secondary" size="sm" onClick={() => setIsUploadOpen(true)} leftIcon={<Plus size={14} />}>
+                        NEW STORY
+                    </Button>
                 </div>
 
                 {loading ? (
-                    <div className="flex-1 flex items-center justify-center"><Loader2 size={32} className="animate-spin text-[#ff4d00]" /></div>
+                    <div className="flex-1 flex items-center justify-center py-20">
+                        <Loader2 size={24} className="animate-spin text-neutral-400" />
+                    </div>
                 ) : (
-                    <div className="p-6">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                        {/* Feed Cards */}
+                        {feed.map((entry, idx) => {
+                            const prof = profiles[entry._id]
+                            const isMe = entry._id === currentUserId
+                            const hasUnseen = !isMe && entry.stories.some(s => !(s.viewedBy && s.viewedBy[currentUserId]))
+                            const latestStory = entry.stories[entry.stories.length - 1]
                             
-                            {/* Create Story Card */}
-                            <div 
-                                onClick={() => setIsUploadOpen(true)}
-                                className="relative aspect-[9/16] bg-[#252525] rounded-xl overflow-hidden cursor-pointer hover:scale-105 transition-transform border-2 border-[#353535] shadow-lg group flex flex-col"
-                            >
-                                <div className="flex-1 bg-[#1c1c1c] flex items-center justify-center group-hover:bg-[#ff4d00]/20 transition-colors">
-                                    <div className="w-12 h-12 rounded-full bg-[#ff4d00] flex items-center justify-center text-white shadow-lg shadow-[#ff4d00]/40">
-                                        <Plus size={24} />
-                                    </div>
-                                </div>
-                                <div className="h-12 bg-[#2a2a2a] flex items-center justify-center">
-                                    <span className="text-white text-sm font-bold">Add Story</span>
-                                </div>
-                            </div>
-
-                            {/* Feed Cards */}
-                            {feed.map((entry, idx) => {
-                                const prof = profiles[entry._id]
-                                const isMe = entry._id === currentUserId
-                                const hasUnseen = !isMe && entry.stories.some(s => !(s.viewedBy && s.viewedBy[currentUserId]))
-                                const latestStory = entry.stories[entry.stories.length - 1]
-                                
-                                return (
-                                    <div 
-                                        key={entry._id}
-                                        onClick={() => setActiveViewerIdx(idx)}
-                                        className={`relative aspect-[9/16] bg-[#252525] rounded-xl overflow-hidden cursor-pointer hover:scale-105 transition-transform border-2 shadow-lg group ${hasUnseen ? 'border-[#ff4d00]' : 'border-[#353535]'}`}
-                                    >
-                                        {latestStory.type === 'text' ? (
-                                            <div className="w-full h-full flex items-center justify-center p-4 text-center opacity-80 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: latestStory.backgroundColor || '#ff4d00' }}>
-                                                <span className="text-white text-sm font-bold truncate max-w-full">{latestStory.content}</span>
-                                            </div>
-                                        ) : latestStory.type === 'photo' && latestStory.mediaUrl ? (
-                                            <img src={latestStory.mediaUrl} alt="story" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-                                        ) : latestStory.type === 'video' && latestStory.mediaUrl ? (
-                                            <video src={latestStory.mediaUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" muted />
-                                        ) : null}
-                                        
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-                                        
-                                        <div className="absolute bottom-3 left-3 right-3 flex items-center gap-2">
-                                            <img src={prof?.avatar || 'https://via.placeholder.com/32'} className={`w-8 h-8 rounded-full object-cover border-2 ${hasUnseen ? 'border-[#ff4d00]' : 'border-white'}`} />
-                                            <span className="text-white text-xs font-bold truncate drop-shadow-md">{isMe ? 'You' : prof?.displayName || 'Unknown'}</span>
+                            return (
+                                <div 
+                                    key={entry._id}
+                                    onClick={() => setActiveViewerIdx(idx)}
+                                    className={`relative aspect-[9/16] bg-[#121212] border rounded-sm overflow-hidden cursor-pointer hover:border-white transition-all shadow-lg group ${hasUnseen ? 'border-emerald-500' : 'border-[#27272a]'}`}
+                                >
+                                    {latestStory.type === 'text' ? (
+                                        <div className="w-full h-full flex items-center justify-center p-3 text-center" style={{ backgroundColor: latestStory.backgroundColor || '#121212' }}>
+                                            <span className="text-white text-xs font-semibold truncate max-w-full">{latestStory.content}</span>
                                         </div>
-                                        
-                                        {hasUnseen && (
-                                            <div className="absolute top-2 right-2 w-3 h-3 bg-[#ff4d00] rounded-full border-2 border-[#252525]" />
+                                    ) : latestStory.type === 'photo' && latestStory.mediaUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={latestStory.mediaUrl} alt="story" className="w-full h-full object-cover" />
+                                    ) : latestStory.type === 'video' && latestStory.mediaUrl ? (
+                                        <video src={latestStory.mediaUrl} className="w-full h-full object-cover" muted />
+                                    ) : null}
+                                    
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
+                                    
+                                    <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center gap-2">
+                                        {prof?.avatar ? (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img src={prof.avatar} className="w-6 h-6 rounded-full object-cover border border-white" alt="avatar" />
+                                        ) : (
+                                            <div className="w-6 h-6 rounded-full bg-neutral-800 text-white font-bold text-[10px] flex items-center justify-center">
+                                                {prof?.displayName?.[0]?.toUpperCase()}
+                                            </div>
                                         )}
+                                        <span className="text-white text-xs font-medium truncate">{isMe ? 'You' : prof?.displayName || 'User'}</span>
                                     </div>
-                                )
-                            })}
-                        </div>
+                                    
+                                    {hasUnseen && (
+                                        <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full" />
+                                    )}
+                                </div>
+                            )
+                        })}
                     </div>
                 )}
             </div>
 
-            {/* ── Right sidebar – navigation ─────────────────────────────── */}
-            <div className='h-14 w-full md:h-full md:w-[5%] bg-[#252525] border-t-2 md:border-l-2 md:border-t-0 border-[#353535] flex-shrink-0 flex flex-row md:flex-col items-center justify-around md:justify-start py-0 md:py-5 gap-2 order-last md:order-last z-[150] fixed bottom-0 md:static'>
+            {/* Right Navigation */}
+            <div className="h-14 w-full md:h-full md:w-14 bg-[#121212] border-t md:border-l md:border-t-0 border-[#27272a] flex-shrink-0 flex flex-row md:flex-col items-center justify-around md:justify-start py-0 md:py-4 gap-3 order-last">
                 {[
-                    { href: '/chat',       icon: <MessageSquare size={18} />, title: 'Chats'      },
-                    { href: '/stories',    icon: <Play          size={18} />, title: 'Stories',   dot: hasAnyUnseenStory },
-                    { href: '/search',     icon: <Search        size={18} />, title: 'Search'     },
-                    { href: '/buddies',    icon: <Users         size={18} />, title: 'Buddies'    },
-                    { href: '/settings',   icon: <Settings      size={18} />, title: 'Settings'   },
-                    { href: '/profile/me', icon: <UserCircle    size={18} />, title: 'My Profile' },
+                    { href: '/chat', icon: <MessageSquare size={18} />, title: 'Chats' },
+                    { href: '/stories', icon: <Play size={18} />, title: 'Stories', dot: hasAnyUnseenStory },
+                    { href: '/search', icon: <Search size={18} />, title: 'Search' },
+                    { href: '/buddies', icon: <Users size={18} />, title: 'Buddies' },
+                    { href: '/settings', icon: <Settings size={18} />, title: 'Settings' },
+                    { href: '/profile/me', icon: <UserCircle size={18} />, title: 'My Profile' },
                 ].map(({ href, icon, title, dot }) => {
                     const isActive = pathname === href
                     return (
@@ -488,16 +420,15 @@ export default function StoriesPage() {
                             key={href}
                             href={href}
                             title={title}
-                            className={`w-10 h-10 flex items-center justify-center transition-colors relative ${
+                            className={`w-9 h-9 flex items-center justify-center rounded-sm transition-all relative ${
                                 isActive
-                                    ? 'bg-[#ff4d00]/15 text-[#ff4d00]'
-                                    : 'text-[#555] hover:text-[#ff4d00] hover:bg-[#ff4d00]/10'
+                                    ? 'bg-white text-black font-bold'
+                                    : 'text-neutral-500 hover:text-neutral-200 hover:bg-[#18181b]'
                             }`}
-                            style={{ clipPath: 'polygon(6px 0%,100% 0%,100% calc(100% - 6px),calc(100% - 6px) 100%,0% 100%,0% 6px)' }}
                         >
                             {icon}
                             {dot && (
-                                <span className='absolute top-1 right-1 w-2.5 h-2.5 bg-[#ff4d00] rounded-full border-2 border-[#252525]' />
+                                <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full" />
                             )}
                         </Link>
                     )

@@ -159,7 +159,7 @@ export async function decryptIncomingMessage(msg: ChatMessage): Promise<ChatMess
         return updatedMsg;
     }
 
-    if (!msg.deviceCiphertexts || msg.isDeleted) {
+    if (!msg.deviceCiphertexts || Object.keys(msg.deviceCiphertexts).length === 0 || msg.isDeleted) {
         return msg;
     }
 
