@@ -25,13 +25,13 @@ function VerifyEmailInner() {
         verifyEmail(token)
             .then(accessToken => {
                 localStorage.setItem('accessToken', accessToken)
-                toast.success('Email verified! Welcome to Talkie 🎉')
+                toast.success('Email verified! Welcome to Talkie')
                 router.replace('/onboarding')
             })
             .catch((err: { response?: { data?: { message?: string } } }) => {
                 const msg = err.response?.data?.message ?? 'Verification failed.'
                 if (msg === 'VERIFICATION TOKEN ALREADY USED') {
-                    toast('Email already verified — please log in.', { icon: 'ℹ️' })
+                    toast.success('Email already verified — please log in.')
                     router.replace('/login')
                 } else if (msg === 'VERIFICATION TOKEN EXPIRED') {
                     toast.error('Verification link expired. Request a new one.')
