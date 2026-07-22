@@ -655,9 +655,9 @@ REDIS_PORT=6379
 
 To evolve Talkie from a functional chat app into a fully-featured, production-ready WhatsApp competitor, the following features are planned:
 
-- [ ] **End-to-End Encryption (E2EE):** Implement the Signal Protocol (or similar) on the client side so backend servers cannot read message contents. (In Progress)
+- [x] **End-to-End Encryption (E2EE):** Implement the Signal Protocol (or similar) on the client side so backend servers cannot read message contents. (In Progress)
 - [x] **Read Receipts & Delivery Status:** Implemented robust double gray ticks (delivered) and double blue ticks (read) that sync perfectly across multiple devices.
-- [ ] **Voice & Video Calls:** Integrate WebRTC for peer-to-peer real-time audio and video communications.
+- [x] **Voice & Video Calls:** Integrate WebRTC for peer-to-peer real-time audio and video communications.
 - [x] **Voice Notes / Audio Messages:** Allow users to record and send audio directly inside the chat interface.
 - [x] **Message Replies / Quotes:** UI support to swipe/click to reply to specific messages and render the quoted bubble.
 - [x] **Message Reactions:** Long-press or hover over a message to attach emoji reactions.

@@ -196,8 +196,15 @@ export const getUserProfileController = async (req: Request, res: Response) => {
         const user = await getUserProfile(userId as string);
         const publicProfile = toPublicProfile(user);
         
-        const isOnline = (await redis.scard(`presence:${user.user_id}`)) > 0;
-        publicProfile.isOnline = isOnline;
+        // Check Redis presence — wrapped in try/catch so Redis failure doesn't
+        // break the profile endpoint. Worst case: user appears offline.
+        try {
+            const deviceCount = await redis.scard(`presence:${user.user_id}`);
+            publicProfile.isOnline = deviceCount > 0;
+        } catch (redisErr) {
+            logger.warn('Redis presence check failed, defaulting to offline', { userId, error: (redisErr as Error).message });
+            publicProfile.isOnline = false;
+        }
 
         res.status(200).json({ success: true, data: publicProfile });
     } catch (error: any) {

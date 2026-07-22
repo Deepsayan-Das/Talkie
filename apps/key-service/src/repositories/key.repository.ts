@@ -52,7 +52,10 @@ export const upsertOneTimePrekeys = async (payloads: OneTimePrekeyPayload[]) => 
     await db("one_time_prekeys")
         .insert(rows)
         .onConflict(["user_id", "device_id", "key_id"])
-        .ignore();
+        .merge({
+            public_key: db.raw("EXCLUDED.public_key"),
+            is_used: false
+        });
 };
 
 export const getUnusedOtkCount = async (userId: string, deviceId: string): Promise<{ count: number, keyIds: number[] }> => {

@@ -11,7 +11,7 @@ import React, {
 import { useRouter } from 'next/navigation'
 import { login as apiLogin, register as apiRegister, logout as apiLogout, rotateTokens } from '@/lib/auth'
 import type { AuthUser } from '@/lib/auth'
-import { generatePreKeys, getOrCreateIdentityKey, getOrCreateDeviceId, setCurrentUserId } from '@/lib/crypto/identity'
+import { generatePreKeys, ensureValidDeviceAndIdentity, getOrCreateDeviceId, setCurrentUserId } from '@/lib/crypto/identity'
 import { api } from '@/lib/api'
 import { secureStore } from '@/lib/storage/secureStore'
 
@@ -166,8 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const initializeE2EE = async () => {
             try {
-                const deviceId = getOrCreateDeviceId();
-                const identityKey = await getOrCreateIdentityKey(deviceId);
+                const { deviceId, identityKey } = await ensureValidDeviceAndIdentity(user.id);
                 console.log('Identity key initialized');
 
                 let unusedCountResult;

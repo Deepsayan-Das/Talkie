@@ -46,6 +46,13 @@ export const services: ServiceConfig[] = [
         pathRewrite: { '^/': '/chat/' },
         publicPaths: []
     },
+    // ── Stories service (via Chat service) ─────────────────────────────────
+    {
+        mountPrefix: '/stories',
+        target: env.chat_service_url,
+        pathRewrite: { '^/': '/stories/' },
+        publicPaths: []
+    },
     // ── File service ───────────────────────────────────────────────────────
     // file-service mounts at '/files' internally
     {

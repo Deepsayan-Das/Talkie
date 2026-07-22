@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { initSocketHandler } from './socket/socket.handler';
 import { env } from './config/env';
 import chatRouter from './routes/chat.routes';
+import storyRouter from './routes/story.routes';
 import logger from './config/logger';
 import { metrics } from './config/metrics';
 import { initBroker } from './config/broker';
@@ -11,6 +12,7 @@ const app = express();
 
 app.use(express.json());
 app.use('/chat', chatRouter)
+app.use('/stories', storyRouter)
 app.get('/metrics', async (req, res) => {
     res.set('Content-Type', metrics.register.contentType);
     res.send(await metrics.register.metrics());

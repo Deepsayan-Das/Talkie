@@ -59,7 +59,7 @@ export async function decryptWithCatchUp(
 
     // Case 2: this message is AHEAD of where we expected — skip forward, saving the gap keys.
     const stepsNeeded = messageIndex - session.nextExpectedIndex + 1;
-    if (stepsNeeded < 1) throw new Error('Message index behind current chain — replay or corruption');
+    if (stepsNeeded < 1) throw new Error(`Ratchet desync: message index ${messageIndex} is behind chain position ${session.nextExpectedIndex} — likely already decrypted`);
 
     const { keys, finalChainKey } = advanceChain(sodium.from_base64(session.chainKey), stepsNeeded);
 

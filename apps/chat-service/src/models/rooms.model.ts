@@ -15,7 +15,24 @@ const roomSchema = new mongoose.Schema({
                     type: String,
                     enum: ["member", "admin", "owner"],
                     default: "member"
+                },
+                mutedUntil: {
+                    type: Date,
+                    default: null
                 }
+            }
+        ],
+        default: []
+    },
+    pendingRequests: {
+        type: [
+            {
+                id: String,
+                type: { type: String }, // "kick" | "promote" | "demote" | "mute"
+                targetUserId: String,
+                requestedBy: String,
+                reason: String,
+                createdAt: { type: Date, default: Date.now }
             }
         ],
         default: []

@@ -21,7 +21,6 @@ export const initChatSubscriber = async () => {
                 logger.info('Handling chat presence event', { userId: payload.userId });
                 await updateLastSeen(payload.userId, new Date(payload.timestamp));
                 success = true;
-                ack();
             } catch (err: any) {
                 attempt++;
                 logger.warn('Failed to process chat presence event Retrying... attempt: ' + attempt, { error: err.message });

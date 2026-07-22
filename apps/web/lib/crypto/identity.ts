@@ -33,11 +33,10 @@ export function getOrCreateDeviceId(userId?: string): string {
 
     const uid = userId ?? getCurrentUserId();
     if (!uid) {
-        // Fallback: legacy single-user key (should not happen after login)
-        let deviceId = localStorage.getItem('deviceId');
+        let deviceId = sessionStorage.getItem('tempDeviceId');
         if (!deviceId) {
             deviceId = crypto.randomUUID();
-            localStorage.setItem('deviceId', deviceId);
+            sessionStorage.setItem('tempDeviceId', deviceId);
         }
         return deviceId;
     }
@@ -45,26 +44,18 @@ export function getOrCreateDeviceId(userId?: string): string {
     const storageKey = `deviceId:${uid}`;
     let deviceId = localStorage.getItem(storageKey);
     if (!deviceId) {
-        // Migrate: if there's an old un-scoped deviceId and no user-scoped one,
-        // adopt it for the first user who logs in (avoids invalidating existing sessions)
-        const legacy = localStorage.getItem('deviceId');
-        if (legacy) {
-            deviceId = legacy;
-            localStorage.setItem(storageKey, deviceId);
-            // Don't delete legacy yet — other code paths may still read it during migration
-        } else {
-            deviceId = crypto.randomUUID();
-            localStorage.setItem(storageKey, deviceId);
-        }
+        deviceId = crypto.randomUUID();
+        localStorage.setItem(storageKey, deviceId);
     }
     return deviceId;
 }
 
-export async function getOrCreateIdentityKey(deviceId: string) {
+export async function getOrCreateIdentityKey(deviceId: string): Promise<IdentityKeyRecord> {
     await sodium.ready;
     const existing = await secureStore.getIdentityKey(deviceId);
-    if (existing && existing.signingPrivateKey)
+    if (existing && existing.signingPrivateKey) {
         return existing;
+    }
     const keyPair = sodium.crypto_box_keypair();
     const signingKeyPair = sodium.crypto_sign_keypair();
     const record: IdentityKeyRecord = {
@@ -79,24 +70,55 @@ export async function getOrCreateIdentityKey(deviceId: string) {
     return record;
 }
 
+export async function ensureValidDeviceAndIdentity(userId: string) {
+    await sodium.ready;
+    const deviceId = getOrCreateDeviceId(userId);
+    const identityKey = await getOrCreateIdentityKey(deviceId);
+    return { deviceId, identityKey };
+}
+
 export async function generatePreKeys(deviceId: string, signingPrivateKeyB64: string, serverUnusedCount: number) {
     await sodium.ready;
     const signingPrivateKey = sodium.from_base64(signingPrivateKeyB64);
     
-    const signedPrekey = sodium.crypto_box_keypair();
-    const signedPrekeyId = Date.now();
-    const signature = sodium.crypto_sign_detached(
-        signedPrekey.publicKey,
-        signingPrivateKey
-    );
+    // ── Signed prekey: reuse the existing one if it's still valid ──────────
+    // Generating a new signed prekey on every login invalidates all existing
+    // X3DH sessions established with the old one, causing "wrong secret key"
+    // errors for every message. Only rotate when there's no local key.
+    let existingSignedPrekey = await secureStore.getSignedPrekey(deviceId);
+    let signedPrekeyResult;
 
-    // Persist the signed prekey's private half locally, rotating it independently of identity keys
-    await secureStore.setSignedPrekey(deviceId, {
-        id: signedPrekeyId,
-        publicKey: sodium.to_base64(signedPrekey.publicKey),
-        privateKey: sodium.to_base64(signedPrekey.privateKey),
-    });
+    if (existingSignedPrekey && existingSignedPrekey.publicKey && existingSignedPrekey.privateKey) {
+        // Re-sign the existing public key (the signature proves we still own the identity)
+        const pubBytes = sodium.from_base64(existingSignedPrekey.publicKey);
+        const signature = sodium.crypto_sign_detached(pubBytes, signingPrivateKey);
+        signedPrekeyResult = {
+            id: existingSignedPrekey.id,
+            publicKey: existingSignedPrekey.publicKey,
+            privateKey: existingSignedPrekey.privateKey,
+            signature: sodium.to_base64(signature),
+        };
+    } else {
+        // No valid signed prekey exists — create a fresh one
+        const signedPrekey = sodium.crypto_box_keypair();
+        const signedPrekeyId = Date.now();
+        const signature = sodium.crypto_sign_detached(signedPrekey.publicKey, signingPrivateKey);
 
+        signedPrekeyResult = {
+            id: signedPrekeyId,
+            publicKey: sodium.to_base64(signedPrekey.publicKey),
+            privateKey: sodium.to_base64(signedPrekey.privateKey),
+            signature: sodium.to_base64(signature),
+        };
+
+        await secureStore.setSignedPrekey(deviceId, {
+            id: signedPrekeyId,
+            publicKey: signedPrekeyResult.publicKey,
+            privateKey: signedPrekeyResult.privateKey,
+        });
+    }
+
+    // ── One-time prekeys: top up if the server is running low ──────────────
     const TARGET_COUNT = 20;
     const needToGenerate = Math.max(0, TARGET_COUNT - serverUnusedCount);
     
@@ -118,12 +140,7 @@ export async function generatePreKeys(deviceId: string, signingPrivateKeyB64: st
     }
 
     return {
-        signedPrekey: {
-            id: signedPrekeyId,
-            publicKey: sodium.to_base64(signedPrekey.publicKey),
-            privateKey: sodium.to_base64(signedPrekey.privateKey),
-            signature: sodium.to_base64(signature)
-        },
+        signedPrekey: signedPrekeyResult,
         oneTimePreKeys
     }
 }

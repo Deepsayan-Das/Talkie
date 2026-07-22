@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createRoomController, getRoomsController, getRoomByIdController, updateGroupController, deleteRoomController, addMemberController, removeMemberController, promoteMemberController, demoteMemberController, getMessagesController } from "../controllers/chat.controller";
+import { createRoomController, getRoomsController, getRoomByIdController, updateGroupController, deleteRoomController, addMemberController, removeMemberController, promoteMemberController, demoteMemberController, getMessagesController, getTurnCredentialsController } from "../controllers/chat.controller";
 
 const router = Router();
 
@@ -13,5 +13,5 @@ router.delete('/room/:roomId/member', removeMemberController)
 router.patch('/room/:roomId/member/:memberId/promote', promoteMemberController)
 router.patch('/room/:roomId/member/:memberId/demote', demoteMemberController)
 router.get('/room/:roomId/messages', getMessagesController)
-
+router.get('/turn-credentials', getTurnCredentialsController)
 export default router

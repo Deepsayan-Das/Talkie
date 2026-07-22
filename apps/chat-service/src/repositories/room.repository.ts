@@ -88,5 +88,33 @@ export const demoteMember = async (roomId: string, userId: string) => {
 export const removeMember = async (roomId: string, userId: string) => {
     return await Room.findByIdAndUpdate(roomId, {
         $pull: { members: { userId } }
-    });
+    }, { new: true });
+}
+
+export const muteMember = async (roomId: string, userId: string, mutedUntil: Date) => {
+    return await Room.findOneAndUpdate(
+        { _id: roomId, "members.userId": userId },
+        { $set: { "members.$.mutedUntil": mutedUntil } },
+        { new: true }
+    );
+}
+
+export const unmuteMember = async (roomId: string, userId: string) => {
+    return await Room.findOneAndUpdate(
+        { _id: roomId, "members.userId": userId },
+        { $set: { "members.$.mutedUntil": null } },
+        { new: true }
+    );
+}
+
+export const addPendingRequest = async (roomId: string, request: any) => {
+    return await Room.findByIdAndUpdate(roomId, {
+        $push: { pendingRequests: request }
+    }, { new: true });
+}
+
+export const removePendingRequest = async (roomId: string, requestId: string) => {
+    return await Room.findByIdAndUpdate(roomId, {
+        $pull: { pendingRequests: { id: requestId } }
+    }, { new: true });
 }

@@ -21,7 +21,6 @@ export const initAuthSubscriber = async () => {
                 logger.info('Handling auth event', { email: payload.email });
                 await sendVerificationMail(payload.email, payload.verificationLink);
                 success = true;
-                ack();
             } catch (err: any) {
                 attempt++;
                 logger.warn('Failed to process auth event Retrying... attempt: ' + attempt, { error: err.message });

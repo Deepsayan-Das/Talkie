@@ -174,6 +174,12 @@ export const sendMessage = async (
     if (!user) {
         throw new Error("user not the memeber of the group");
     }
+    
+    // @ts-ignore
+    if (user.mutedUntil && new Date(user.mutedUntil).getTime() > Date.now()) {
+        const until = new Date(user.mutedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        throw new Error(`You are muted in this group until ${until}`);
+    }
 
     let targetDevices: string[] = [];
     if (deviceCiphertexts) {
@@ -305,4 +311,72 @@ export const messageDelivered = async (roomId: string, messageId: string, userId
         throw new Error("user not the member of the group");
     }
     return await MessageRepository.recordDelivery(messageId, deviceId);
+}
+
+export const voteOnPoll = async (roomId: string, messageId: string, userId: string, optionId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) throw new Error("Room not found");
+    const user = room.members.find((member) => member.userId === userId);
+    if (!user) throw new Error("user not the member of the group");
+    const message = await MessageRepository.findMessageById(messageId);
+    if (!message) throw new Error("Message not found");
+    
+    return await MessageRepository.addPollVote(messageId, userId, optionId);
+}
+
+export const muteMember = async (roomId: string, adminId: string, memberId: string, durationMs: number) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) throw new Error("Room not found");
+    const admin = room.members.find(m => m.userId === adminId);
+    if (!admin || (admin.role !== 'admin' && admin.role !== 'owner')) throw new Error("Not authorized");
+    
+    const mutedUntil = new Date(Date.now() + durationMs);
+    return await RoomRepository.muteMember(roomId, memberId, mutedUntil);
+}
+
+export const unmuteMember = async (roomId: string, adminId: string, memberId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) throw new Error("Room not found");
+    const admin = room.members.find(m => m.userId === adminId);
+    if (!admin || (admin.role !== 'admin' && admin.role !== 'owner')) throw new Error("Not authorized");
+    
+    return await RoomRepository.unmuteMember(roomId, memberId);
+}
+
+export const createRequest = async (roomId: string, userId: string, type: string, targetUserId: string, reason: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) throw new Error("Room not found");
+    const user = room.members.find(m => m.userId === userId);
+    if (!user) throw new Error("Not authorized");
+    
+    const request = {
+        id: Math.random().toString(36).substring(2, 15),
+        type,
+        targetUserId,
+        requestedBy: userId,
+        reason,
+        createdAt: new Date()
+    };
+    return await RoomRepository.addPendingRequest(roomId, request);
+}
+
+export const approveRequest = async (roomId: string, adminId: string, requestId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) throw new Error("Room not found");
+    const admin = room.members.find(m => m.userId === adminId);
+    if (!admin || (admin.role !== 'admin' && admin.role !== 'owner')) throw new Error("Not authorized");
+    
+    const request = (room as any).pendingRequests?.find((r: any) => r.id === requestId);
+    if (!request) throw new Error("Request not found");
+    
+    return await RoomRepository.removePendingRequest(roomId, requestId);
+}
+
+export const denyRequest = async (roomId: string, adminId: string, requestId: string) => {
+    const room = await RoomRepository.findRoomById(roomId);
+    if (!room) throw new Error("Room not found");
+    const admin = room.members.find(m => m.userId === adminId);
+    if (!admin || (admin.role !== 'admin' && admin.role !== 'owner')) throw new Error("Not authorized");
+    
+    return await RoomRepository.removePendingRequest(roomId, requestId);
 }

@@ -46,15 +46,30 @@ export function leaveRoom(roomId: string): void {
 }
 
 export async function sendMessage(payload: {
-    recipientUserId: string,
+    recipientUserId?: string,
     senderUserId: string,
     roomId: string,
     content: string,
+    isGroupChat?: boolean,
     attachments?: { url: string; contentType: string; fileSize: number }[],
     replyTo?: string,
     forwardedFrom?: { originalSenderId: string; originalRoomId: string; originalMessageId: string; originalTimestamp: Date }
 }): Promise<void> {
+    if (payload.isGroupChat) {
+        socket?.emit('sendMessage', {
+            roomId: payload.roomId,
+            content: payload.content,
+            deviceCiphertexts: {},
+            attachments: payload.attachments,
+            replyTo: payload.replyTo,
+            forwardedFrom: payload.forwardedFrom,
+        });
+        return;
+    }
+
     const myDeviceId = getOrCreateDeviceId();
+
+    if (!payload.recipientUserId) throw new Error("recipientUserId is required for E2EE DMs");
 
     // 1. Fetch all registered devices for the recipient and the sender
     const [recipientRes, senderRes] = await Promise.all([
@@ -105,7 +120,7 @@ export async function sendMessage(payload: {
 // is embedded in the E2EE-encrypted content field so it travels through the
 // existing ratchet, maintaining E2EE for the audio data.
 export async function sendAudioMessage(payload: {
-    recipientUserId: string,
+    recipientUserId?: string,
     senderUserId: string,
     roomId: string,
     encryptedBlobUrl: string,
@@ -113,6 +128,7 @@ export async function sendAudioMessage(payload: {
     blobNonceB64: string,
     fileSize: number,
     durationMs: number,
+    isGroupChat?: boolean,
 }): Promise<void> {
     // The content field carries the decryption metadata as JSON.
     // This content is itself encrypted by the ratchet (E2EE).
@@ -128,6 +144,7 @@ export async function sendAudioMessage(payload: {
         senderUserId: payload.senderUserId,
         roomId: payload.roomId,
         content: contentPayload,
+        isGroupChat: payload.isGroupChat,
         attachments: [{
             url: payload.encryptedBlobUrl,
             contentType: 'audio/webm',
@@ -138,9 +155,10 @@ export async function sendAudioMessage(payload: {
 
 // ─── Forward message helper ───────────────────────────────────────────────────
 export async function forwardMessage(payload: {
-    recipientUserId: string,
+    recipientUserId?: string,
     senderUserId: string,
     targetRoomId: string,
+    isGroupChat?: boolean,
     originalMessage: {
         _id: string,
         senderId: string,
@@ -155,6 +173,7 @@ export async function forwardMessage(payload: {
         senderUserId: payload.senderUserId,
         roomId: payload.targetRoomId,
         content: payload.originalMessage.content,
+        isGroupChat: payload.isGroupChat,
         attachments: payload.originalMessage.attachments,
         forwardedFrom: {
             originalSenderId: payload.originalMessage.senderId,

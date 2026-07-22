@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import * as ChatService from "../services/chat.service";
+import { env } from "../config/env";
 
 const resolveStatus = (message: string): number => {
     if (message.toLowerCase().includes("not found")) return 404;
@@ -78,6 +79,7 @@ export const addMemberController = async (req: Request, res: Response) => {
     }
 }
 
+
 export const removeMemberController = async (req: Request, res: Response) => {
     try {
         const userId = req.headers["x-user-id"] as string;
@@ -93,9 +95,8 @@ export const removeMemberController = async (req: Request, res: Response) => {
 export const promoteMemberController = async (req: Request, res: Response) => {
     try {
         const userId = req.headers["x-user-id"] as string;
-        const { roomId } = req.params;
-        const { memberId } = req.body;
-        const updatedRoom = await ChatService.promoteMember(roomId as string, userId, memberId);
+        const { roomId, memberId } = req.params;
+        const updatedRoom = await ChatService.promoteMember(roomId as string, userId, memberId as string);
         return res.status(200).json({ success: true, data: updatedRoom });
     } catch (error: any) {
         return res.status(resolveStatus(error.message)).json({ success: false, message: error.message });
@@ -105,9 +106,8 @@ export const promoteMemberController = async (req: Request, res: Response) => {
 export const demoteMemberController = async (req: Request, res: Response) => {
     try {
         const userId = req.headers["x-user-id"] as string;
-        const { roomId } = req.params;
-        const { memberId } = req.body;
-        const updatedRoom = await ChatService.demoteMember(roomId as string, userId, memberId);
+        const { roomId, memberId } = req.params;
+        const updatedRoom = await ChatService.demoteMember(roomId as string, userId, memberId as string);
         return res.status(200).json({ success: true, data: updatedRoom });
     } catch (error: any) {
         return res.status(resolveStatus(error.message)).json({ success: false, message: error.message });
@@ -124,5 +124,36 @@ export const getMessagesController = async (req: Request, res: Response) => {
         return res.status(200).json({ success: true, data: messages });
     } catch (error: any) {
         return res.status(resolveStatus(error.message)).json({ success: false, message: error.message });
+    }
+}
+
+export const getTurnCredentialsController = async (req: Request, res: Response) => {
+    try {
+        const domain = process.env.METERED_DOMAIN || '__talkie__.metered.live';
+        const response = await fetch(
+            `https://${domain}/api/v1/turn/credential?secretKey=${process.env.METERED_SECRET_KEY}`,
+            { method: 'POST' }
+        );
+        const data = await response.json() as any;
+        
+        // If Metered returned an error message instead of credentials, throw it
+        if (data.message) {
+            throw new Error(data.message || data.reason || 'Failed to fetch TURN credentials');
+        }
+
+        const username = data.username;
+        const password = data.password;
+
+        const iceServers = [
+            { urls: 'stun:stun.relay.metered.ca:80' },
+            { urls: 'turn:global.relay.metered.ca:80', username, credential: password },
+            { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username, credential: password },
+            { urls: 'turns:global.relay.metered.ca:443', username, credential: password },
+            { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username, credential: password },
+        ];
+
+        return res.status(200).json({ iceServers });
+    } catch (err: any) {
+        return res.status(500).json({ message: err.message });
     }
 }

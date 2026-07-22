@@ -30,6 +30,12 @@ export async function initiateSessionForDevice(myDeviceId: string, bundle: any) 
         sodium.crypto_generichash(32, new Uint8Array([...sharedSecret, ...sodium.from_string('init')]), null)
     );
 
+    const x3dhInit = {
+        identityPublicKey: myIdentity.publicKey,
+        ephemeralPublicKey: sodium.to_base64(ephemeral.publicKey),
+        usedOneTimePrekeyId: bundle.oneTimePrekey?.keyId ?? null,
+    };
+
     await secureStore.setSession(bundle.deviceId, {
         rootKey: sodium.to_base64(sharedSecret),
         myRatchetPriv: sodium.to_base64(ephemeral.privateKey),
@@ -40,15 +46,12 @@ export async function initiateSessionForDevice(myDeviceId: string, bundle: any) 
         sendIndex: 0,
         recvIndex: 0,
         skippedKeys: {},
+        x3dhInit,
     });
 
     return {
         deviceId: bundle.deviceId,
-        x3dhInit: {
-            identityPublicKey: myIdentity.publicKey,
-            ephemeralPublicKey: sodium.to_base64(ephemeral.publicKey),
-            usedOneTimePrekeyId: bundle.oneTimePrekey?.keyId ?? null,
-        },
+        x3dhInit,
     };
 }
 

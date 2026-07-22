@@ -10,6 +10,7 @@ export interface RatchetSession {
     sendIndex: number;
     recvIndex: number;
     skippedKeys: Record<number, string>;
+    x3dhInit?: any;
 }
 
 // One DH step + KDF, mixing into the root key. Same trick as X3DH, reused.

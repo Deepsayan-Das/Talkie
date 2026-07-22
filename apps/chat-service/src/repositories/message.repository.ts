@@ -108,5 +108,14 @@ export const recordDelivery = async (messageId: string, deviceId: string) => {
         );
     }
 
+
     return null; // not yet complete — don't broadcast
 };
+
+export const addPollVote = async (messageId: string, userId: string, optionId: string) => {
+    return await Message.findByIdAndUpdate(messageId, {
+        $set: {
+            [`pollVotes.${userId}`]: optionId,
+        },
+    }, { new: true });
+}

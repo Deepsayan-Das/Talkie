@@ -43,6 +43,9 @@ export async function sendEncryptedMessage(
         const result = await initiateSessionForDevice(myDeviceId, bundle);
         session = await secureStore.getSession(recipientDeviceId);
         x3dhInit = result.x3dhInit;
+    } else if (!session.theirRatchetPub && session.x3dhInit) {
+        // Recipient has not turned the ratchet back to us yet — continue sending x3dhInit until they reply
+        x3dhInit = session.x3dhInit;
     }
 
     if (!session) {
@@ -89,7 +92,7 @@ export async function receiveEncryptedMessage(
     await sodium.ready;
 
     // Self-decryption (bypassed ratchet)
-    if (senderKey === myDeviceId && payload.myRatchetPub === 'SELF') {
+    if (payload.myRatchetPub === 'SELF') {
         const myIdentity = await secureStore.getIdentityKey(myDeviceId);
         if (!myIdentity) throw new Error("No identity key found for self-decryption");
         

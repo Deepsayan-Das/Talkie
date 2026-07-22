@@ -30,6 +30,7 @@ export interface ChatMessage {
     seenBy: SeenBy[]
     isDeleted: boolean
     reactions?: Record<string, string>
+    pollVotes?: Record<string, string> // userId -> optionId
     forwardedFrom?: {
         originalSenderId: string
         originalRoomId: string
@@ -49,6 +50,16 @@ export interface RoomMember {
     userId: string
     joinedAt: string
     role: 'member' | 'admin' | 'owner'
+    mutedUntil?: string
+}
+
+export interface PendingRequest {
+    id: string
+    type: string
+    targetUserId: string
+    requestedBy: string
+    reason: string
+    createdAt: string
 }
 
 export interface Room {
@@ -59,6 +70,7 @@ export interface Room {
     description?: string
     avatar?: string
     pinnedMessages?: string[]
+    pendingRequests?: PendingRequest[]
     createdBy?: string
     createdAt: string
     updatedAt: string

@@ -1,7 +1,7 @@
 'use client'
 
 import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, Pause, Square, FileText, Reply, X, Mic, Forward, CircleStop } from 'lucide-react'
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -12,18 +12,20 @@ import { useAuth } from '@/context/AuthContext'
 import { resendVerification } from '@/lib/auth'
 import { useSocket } from '@/context/SocketContext'
 import { getUserProfile, getAllRelations, uploadFile } from '@/lib/user'
+import { getStoryFeed, StoryFeedEntry } from '@/lib/stories'
 import { getRooms, getMessages, createRoom, updateGroupInfo, removeMember, promoteMember, demoteMember } from '@/lib/chat'
 import { joinRoom, leaveRoom, sendMessage as socketSend, sendAudioMessage, forwardMessage, emitTyping, emitStopTyping, markAsSeen, reactToMessage, messageDelivered } from '@/lib/socket'
 import { decryptIncomingMessage, encryptBlob, decryptBlob } from '@/lib/crypto/messaging'
 import { secureStore } from '@/lib/storage/secureStore'
 import type { Room, ChatMessage } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
+import { VideoCallOverlay } from '@/components/VideoCallOverlay'
 
 // ─── Clip path constants ──────────────────────────────────────────────────────
-const CLIP_SENT     = 'polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%)'
+const CLIP_SENT = 'polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%)'
 const CLIP_RECEIVED = 'polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px)'
-const CLIP_INPUT    = 'polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%)'
-const CLIP_BTN      = 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)'
+const CLIP_INPUT = 'polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%)'
+const CLIP_BTN = 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)'
 
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
 const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
@@ -71,6 +73,15 @@ function isAudioMessage(msg: ChatMessage): { type: 'audio'; blobKey: string; blo
     return null;
 }
 
+function isPollMessage(msg: ChatMessage): { type: 'poll'; question: string; options: { id: string, text: string }[] } | null {
+    if (!msg.content) return null;
+    try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed.type === 'poll') return parsed;
+    } catch { /* normal text message */ }
+    return null;
+}
+
 // Format ms to MM:SS
 function formatDuration(ms: number): string {
     const totalSec = Math.round(ms / 1000);
@@ -78,6 +89,27 @@ function formatDuration(ms: number): string {
     const s = totalSec % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
+
+const COMMANDS = [
+    { command: '/help', description: 'List available commands', usage: '/help' },
+    { command: '/roll', description: 'Roll a die', usage: '/roll' },
+    { command: '/flip', description: 'Flip a coin', usage: '/flip' },
+    { command: '/8ball', description: 'Ask the magic 8-ball', usage: '/8ball <question>' },
+    { command: '/shrug', description: 'Send ¯\\_(ツ)_/¯', usage: '/shrug' },
+    { command: '/flip-table', description: 'Send (╯°□°)╯︵ ┻━┻', usage: '/flip-table' },
+    { command: '/vote', description: 'Create a poll (options: a,b,c)', usage: '/vote <question> options: a, b, c' },
+    { command: '/promote', description: 'Promote member to admin (@user)', usage: '/promote @username' },
+    { command: '/demote', description: 'Demote admin to member (@user)', usage: '/demote @username' },
+    { command: '/kick', description: 'Remove member from group (@user)', usage: '/kick @username' },
+    { command: '/mute', description: 'Mute member for duration (@user 10m)', usage: '/mute @username <duration>' },
+    { command: '/unmute', description: 'Unmute member (@user)', usage: '/unmute @username' },
+    { command: '/whisper', description: 'Send private DM to group member (@user msg)', usage: '/whisper @username <message>' },
+    { command: '/request', description: 'Request admin action (@user reason)', usage: '/request <action> @username [reason]' },
+    { command: '/requests', description: 'List pending admin requests', usage: '/requests' },
+    { command: '/approve', description: 'Approve a request (<id>)', usage: '/approve <request_id>' },
+    { command: '/deny', description: 'Deny a request (<id>)', usage: '/deny <request_id>' },
+];
+
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 const DateSeparator = ({ label }: { label: string }) => (
@@ -114,7 +146,7 @@ const AudioPlayback = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) =
             const encryptedBytes = new Uint8Array(await res.arrayBuffer());
             // Decrypt client-side
             const decryptedBytes = await decryptBlob(encryptedBytes, audioMeta.blobKey, audioMeta.blobNonce);
-            const blob = new Blob([decryptedBytes], { type: 'audio/webm' });
+            const blob = new Blob([decryptedBytes as unknown as BlobPart], { type: 'audio/webm' });
             const url = URL.createObjectURL(blob);
             if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
             objectUrlRef.current = url;
@@ -180,11 +212,10 @@ const AudioPlayback = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) =
             <button
                 onClick={state === 'idle' ? loadAndPlay : togglePlayPause}
                 disabled={state === 'loading'}
-                className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
-                    isMine
+                className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${isMine
                         ? 'bg-white/20 hover:bg-white/30 text-white'
                         : 'bg-[#ff4d00]/20 hover:bg-[#ff4d00]/30 text-[#ff4d00]'
-                } ${state === 'loading' ? 'animate-pulse' : ''}`}
+                    } ${state === 'loading' ? 'animate-pulse' : ''}`}
             >
                 {state === 'loading' ? (
                     <Loader2 size={18} className="animate-spin" />
@@ -253,7 +284,7 @@ const AudioRecorderModal = ({
             }
             mediaRecRef.current?.stream?.getTracks().forEach(t => t.stop());
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const startTimer = () => {
@@ -529,7 +560,7 @@ const ForwardModal = ({
     onForward: (targetRoom: Room) => void;
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
-    
+
     const filteredRooms = rooms.filter(room => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
@@ -557,7 +588,7 @@ const ForwardModal = ({
                         <X size={20} />
                     </button>
                 </div>
-                
+
                 <div className="px-4 py-3 border-b-2 border-[#353535]">
                     <input
                         type="text"
@@ -615,7 +646,7 @@ const ForwardModal = ({
     );
 };
 
-const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTarget, replyTargetName, onReact, onReplyClick }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; onForward: () => void; replyTarget?: ChatMessage; replyTargetName?: string; onReact: (emoji: string | null) => void; onReplyClick?: (msgId: string) => void }) => {
+const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTarget, replyTargetName, onReact, onReplyClick, onVotePoll }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; onForward: () => void; replyTarget?: ChatMessage; replyTargetName?: string; onReact: (emoji: string | null) => void; onReplyClick?: (msgId: string) => void; onVotePoll: (msgId: string, optionId: string) => void }) => {
     const [showReactions, setShowReactions] = useState(false);
     const reactionsRef = useRef<HTMLDivElement>(null);
     const reactions = msg.reactions || {};
@@ -682,13 +713,12 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                             </div>
                         )}
                         {replyTarget && (
-                            <div 
+                            <div
                                 onClick={() => onReplyClick && onReplyClick(replyTarget._id)}
-                                className={`flex flex-col border-l-4 pl-3 py-1 mb-2 rounded-r cursor-pointer transition-colors ${
-                                    isMine 
-                                        ? 'border-white/70 bg-black/20 hover:bg-black/30' 
+                                className={`flex flex-col border-l-4 pl-3 py-1 mb-2 rounded-r cursor-pointer transition-colors ${isMine
+                                        ? 'border-white/70 bg-black/20 hover:bg-black/30'
                                         : 'border-[#ff4d00] bg-black/20 hover:bg-black/30'
-                                }`}
+                                    }`}
                             >
                                 <span className={`font-bold text-xs mb-0.5 ${isMine ? 'text-white/90' : 'text-[#ff4d00]'}`}>
                                     Replying to {replyTargetName || 'someone'}
@@ -698,7 +728,32 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                                 </span>
                             </div>
                         )}
-                        {isAudioMessage(msg) ? (
+                        {isPollMessage(msg) ? (() => {
+                            const pollMeta = isPollMessage(msg)!;
+                            return (
+                                <div className="flex flex-col gap-2 min-w-[200px]">
+                                    <span className="font-black text-lg">📊 {pollMeta.question}</span>
+                                    {pollMeta.options.map(opt => {
+                                        const votesForOption = Object.values(msg.pollVotes || {}).filter(v => v === opt.id).length;
+                                        const totalVotes = Object.keys(msg.pollVotes || {}).length || 1;
+                                        const percent = Math.round((votesForOption / totalVotes) * 100);
+                                        const myVote = (msg.pollVotes || {})[currentUserId];
+
+                                        return (
+                                            <button
+                                                key={opt.id}
+                                                onClick={() => onVotePoll(msg._id, opt.id)}
+                                                className={`relative overflow-hidden flex justify-between px-3 py-2 text-sm border transition-colors ${myVote === opt.id ? 'border-[#ff4d00]' : 'border-white/20'}`}
+                                            >
+                                                <div className="absolute left-0 top-0 bottom-0 bg-[#ff4d00]/30 transition-all" style={{ width: `${percent}%` }} />
+                                                <span className="relative z-10 font-bold">{opt.text}</span>
+                                                <span className="relative z-10 text-xs opacity-70">{votesForOption}</span>
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            )
+                        })() : isAudioMessage(msg) ? (
                             <AudioPlayback msg={msg} isMine={isMine} />
                         ) : (
                             <>
@@ -720,7 +775,7 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                         )}
                     </div>
                 )}
-                
+
                 {hasReactions && (
                     <div className={`flex flex-wrap gap-1 mt-0.5 ${isMine ? 'justify-end' : 'justify-start'}`}>
                         {Object.entries(reactionCounts).map(([emoji, count]) => (
@@ -741,7 +796,7 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                     {isMine && (
                         msg.seenBy.length > 0
                             ? <CheckCheck size={13} className='text-[#34b7f1]' />
-                            : (msg.delivery?.deliveredAt 
+                            : (msg.delivery?.deliveredAt
                                 ? <CheckCheck size={13} className='text-[#888]' />
                                 : <Check size={13} className='text-[#888]' />)
                     )}
@@ -764,17 +819,17 @@ const TypingIndicator = () => (
 
 // ─── Room list item ───────────────────────────────────────────────────────────
 const RoomItem = ({
-    room, isActive, currentUserId, onClick, profiles
+    room, isActive, currentUserId, onClick, profiles, hasUnseenStory
 }: {
-    room: Room; isActive: boolean; currentUserId: string; onClick: () => void; profiles: Record<string, UserProfile>
+    room: Room; isActive: boolean; currentUserId: string; onClick: () => void; profiles: Record<string, UserProfile>; hasUnseenStory?: boolean;
 }) => {
     const otherId = room.members.find(m => m.userId !== currentUserId)?.userId
     const otherProfile = otherId ? profiles[otherId] : null
-    
+
     const otherName = room.kind === 'dm'
         ? (otherProfile?.displayName ?? `DM-${otherId?.slice(0, 6) ?? '???'}`)
         : (room.name ?? 'Group')
-        
+
     const avatar = room.kind === 'dm' ? otherProfile?.avatar : room.avatar
 
     return (
@@ -785,9 +840,9 @@ const RoomItem = ({
         >
             <div className='relative flex-shrink-0'>
                 {avatar ? (
-                    <img src={avatar} alt={otherName} className='h-12 w-12 rounded-full object-cover' />
+                    <img src={avatar} alt={otherName} className={`h-12 w-12 rounded-full object-cover ${hasUnseenStory ? 'border-2 border-[#ff4d00] p-0.5' : ''}`} />
                 ) : (
-                    <div className='h-12 w-12 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm'>
+                    <div className={`h-12 w-12 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm ${hasUnseenStory ? 'border-2 border-[#ff4d00] p-0.5' : ''}`}>
                         {otherName[0]?.toUpperCase()}
                     </div>
                 )}
@@ -891,7 +946,7 @@ const CreateGroupModal = ({
                 </div>
 
                 <form onSubmit={handleSubmit} className="flex flex-col gap-8 flex-1">
-                    <div 
+                    <div
                         className={`flex flex-col items-center justify-center p-8 border-4 border-dashed rounded-xl transition-colors cursor-pointer ${dragActive ? 'border-[#ff4d00] bg-[#ff4d00]/10' : 'border-[#353535] hover:border-[#ff4d00]/50'}`}
                         onDragOver={e => { e.preventDefault(); setDragActive(true); }}
                         onDragLeave={() => setDragActive(false)}
@@ -899,7 +954,7 @@ const CreateGroupModal = ({
                         onClick={() => fileInputRef.current?.click()}
                     >
                         <input type="file" ref={fileInputRef} onChange={handleAvatarChange} className="hidden" accept="image/*" />
-                        
+
                         {avatarUrl ? (
                             <img src={avatarUrl} alt="Preview" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
                         ) : (
@@ -939,9 +994,8 @@ const CreateGroupModal = ({
                                     <div
                                         key={b.id}
                                         onClick={() => toggleBuddy(b.id)}
-                                        className={`p-4 flex items-center justify-between cursor-pointer border-2 transition-all ${
-                                            selected.has(b.id) ? 'bg-[#ff4d00]/20 border-[#ff4d00] translate-x-2' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]/50'
-                                        }`}
+                                        className={`p-4 flex items-center justify-between cursor-pointer border-2 transition-all ${selected.has(b.id) ? 'bg-[#ff4d00]/20 border-[#ff4d00] translate-x-2' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]/50'
+                                            }`}
                                     >
                                         <span className={`text-base text-white font-bold ${anybody.className}`}>{b.name}</span>
                                         {selected.has(b.id) && <Check size={20} className="text-[#ff4d00]" />}
@@ -1073,7 +1127,7 @@ const GroupInfoModal = ({
 
                 {isEditing ? (
                     <div className="flex flex-col gap-8">
-                        <div 
+                        <div
                             className={`flex flex-col items-center justify-center p-8 border-4 border-dashed rounded-xl transition-colors cursor-pointer ${dragActive ? 'border-[#ff4d00] bg-[#ff4d00]/10' : 'border-[#353535] hover:border-[#ff4d00]/50'}`}
                             onDragOver={e => { e.preventDefault(); setDragActive(true); }}
                             onDragLeave={() => setDragActive(false)}
@@ -1081,7 +1135,7 @@ const GroupInfoModal = ({
                             onClick={() => avatarInputRef.current?.click()}
                         >
                             <input type="file" ref={avatarInputRef} className="hidden" onChange={handleAvatarChange} accept="image/*" />
-                            
+
                             {avatarUrl ? (
                                 <img src={avatarUrl} alt="Group Avatar" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
                             ) : (
@@ -1148,7 +1202,7 @@ const GroupInfoModal = ({
                                             <span className="text-[10px] text-[#888] uppercase tracking-wider font-black">{m.role}</span>
                                         </div>
                                     </div>
-                                    
+
                                     {!isMe && isAdmin && m.role !== 'owner' && (
                                         <div className="flex gap-3">
                                             {m.role === 'member' && myRole === 'owner' && (
@@ -1204,10 +1258,10 @@ const ChatInner = () => {
     const [hasMore, setHasMore] = useState(true)
     const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null)
 
-    const bottomRef    = useRef<HTMLDivElement>(null)
-    const textareaRef  = useRef<HTMLTextAreaElement>(null)
-    const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const prevRoomId   = useRef<string | null>(null)
+    const bottomRef = useRef<HTMLDivElement>(null)
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
+    const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const prevRoomId = useRef<string | null>(null)
     const emojiPickerRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [uploadingFile, setUploadingFile] = useState(false)
@@ -1215,6 +1269,46 @@ const ChatInner = () => {
     const [isAudioRecorderOpen, setIsAudioRecorderOpen] = useState(false)
     const [sendingAudio, setSendingAudio] = useState(false)
     const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null)
+    const [storiesFeed, setStoriesFeed] = useState<StoryFeedEntry[]>([])
+
+    const { filteredCommands, commandHint, mentionSuggestions } = useMemo(() => {
+        let commands: any[] = [];
+        let hint = null;
+        let mentions: UserProfile[] = [];
+
+        // Mention suggestions logic
+        const lastWordMatch = input.match(/(?:^|\s)(@\w*)$/);
+        if (lastWordMatch && activeRoom) {
+            const typedMention = lastWordMatch[1].slice(1).toLowerCase();
+            const members = activeRoom.members
+                .map(m => profiles[m.userId])
+                .filter(Boolean); // get profiles for all members
+            
+            mentions = members.filter(p => p.displayName.toLowerCase().startsWith(typedMention) || p.username.toLowerCase().startsWith(typedMention));
+        }
+
+        // Command suggestions logic
+        if (input.startsWith('/')) {
+            const firstSpace = input.indexOf(' ');
+            if (firstSpace === -1) {
+                // Still typing the command name
+                const typed = input.toLowerCase();
+                commands = COMMANDS.filter(c => c.command.startsWith(typed));
+            } else {
+                // Command is already typed, show hint
+                const typedCmd = input.slice(0, firstSpace).toLowerCase();
+                const matchedCmd = COMMANDS.find(c => c.command === typedCmd);
+                if (matchedCmd && matchedCmd.usage !== matchedCmd.command) {
+                    hint = matchedCmd;
+                }
+            }
+        }
+        return { filteredCommands: commands, commandHint: hint, mentionSuggestions: mentions };
+    }, [input, activeRoom, profiles]);
+
+    const hasAnyUnseenStory = storiesFeed.some(entry =>
+        entry._id !== currentUserId && entry.stories.some(s => !(s.viewedBy && s.viewedBy[currentUserId]))
+    )
 
     // ── Click outside emoji picker ────────────────────────────────────────────
     useEffect(() => {
@@ -1242,6 +1336,10 @@ const ChatInner = () => {
                 setHasPendingRequests(incoming.length > 0)
             })
             .catch(() => { /* silently ignore */ })
+
+        getStoryFeed()
+            .then(feed => setStoriesFeed(feed))
+            .catch(() => { /* silently ignore */ })
     }, [user])
 
     // ── Load rooms on mount ───────────────────────────────────────────────────
@@ -1257,7 +1355,7 @@ const ChatInner = () => {
             .then(async data => {
                 await secureStore.setCachedRooms(data).catch(console.error)
                 setRooms(data)
-                
+
                 const ids = new Set<string>()
                 data.forEach(r => {
                     if (r.kind === 'dm') {
@@ -1270,7 +1368,7 @@ const ChatInner = () => {
                     try {
                         const p = await getUserProfile(id)
                         profs[id] = p
-                    } catch {}
+                    } catch { }
                 }))
                 setProfiles(profs)
 
@@ -1286,8 +1384,26 @@ const ChatInner = () => {
             })
             .catch(() => toast.error('Could not load conversations'))
             .finally(() => setRoomsLoading(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, user?.id])
+
+    // ── Periodic presence refresh for the active DM partner ────────────────
+    useEffect(() => {
+        if (!activeRoom || activeRoom.kind !== 'dm') return;
+        const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!otherId) return;
+
+        const refreshPresence = () => {
+            getUserProfile(otherId)
+                .then(p => setProfiles(prev => ({ ...prev, [otherId]: p })))
+                .catch(() => { /* silently ignore — stale status is acceptable */ });
+        };
+
+        // Refresh immediately when switching rooms, then every 30 seconds
+        refreshPresence();
+        const interval = setInterval(refreshPresence, 30_000);
+        return () => clearInterval(interval);
+    }, [activeRoom?._id, currentUserId])
 
     // ── On room change: join socket room + load first page of messages ─────
     useEffect(() => {
@@ -1346,7 +1462,7 @@ const ChatInner = () => {
                     markAsSeen(msg.roomId, msg._id)
                 }
             }
-            
+
             // Deliver the message if it's not ours
             if (msg.senderId !== user?.id) {
                 messageDelivered(msg.roomId, msg._id)
@@ -1397,6 +1513,15 @@ const ChatInner = () => {
             toast.error(`Error: ${error.message}`);
         }
 
+        const onPollVoteUpdated = (updated: ChatMessage) => {
+            setMessages(prev => prev.map(m => m._id === updated._id ? { ...m, pollVotes: updated.pollVotes } : m))
+        }
+
+        const onRoomUpdated = (updatedRoom: Room) => {
+            setRooms(prev => prev.map(r => r._id === updatedRoom._id ? { ...updatedRoom, lastMessageRecord: r.lastMessageRecord } : r))
+            setActiveRoom(prev => prev?._id === updatedRoom._id ? { ...updatedRoom, lastMessageRecord: prev?.lastMessageRecord } : prev)
+        }
+
         socket.on('newMessage', onMessage)
         socket.on('userTyping', onTyping)
         socket.on('userStoppedTyping', onStopTyping)
@@ -1406,6 +1531,8 @@ const ChatInner = () => {
         socket.on('messageStatusUpdated', onMessageStatusUpdated)
         socket.on('messageSeen', onSeen)
         socket.on('error', onError)
+        socket.on('pollVoteUpdated', onPollVoteUpdated)
+        socket.on('roomUpdated', onRoomUpdated)
 
         return () => {
             socket.off('newMessage', onMessage)
@@ -1417,6 +1544,8 @@ const ChatInner = () => {
             socket.off('messageStatusUpdated', onMessageStatusUpdated)
             socket.off('messageSeen', onSeen)
             socket.off('error', onError)
+            socket.off('pollVoteUpdated', onPollVoteUpdated)
+            socket.off('roomUpdated', onRoomUpdated)
         }
     }, [socket, activeRoom, user?.id])
 
@@ -1437,14 +1566,147 @@ const ChatInner = () => {
 
     // ── Send message via socket ───────────────────────────────────────────
     const sendMessageHandler = useCallback(async () => {
-        const text = input.trim()
-        if (!text || !activeRoom) return
-        const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId
-        if (!recipientUserId) {
+        let finalContent = input.trim()
+        if (!finalContent || !activeRoom) return
+
+        if (finalContent.startsWith('/')) {
+            const args = finalContent.substring(1).split(' ');
+            const command = args[0].toLowerCase();
+
+            const findUser = (name: string) => {
+                if (!name) return undefined;
+                let clean = name.startsWith('@') ? name.slice(1) : name;
+                clean = clean.toLowerCase();
+                if (clean === 'me') return currentUserId;
+                
+                return activeRoom.members.find(m => {
+                    const p = profiles[m.userId];
+                    if (!p) return false;
+                    return p.username.toLowerCase() === clean || 
+                           p.displayName.toLowerCase() === clean ||
+                           p.displayName.toLowerCase().replace(/\s+/g, '') === clean;
+                })?.userId;
+            };
+
+            if (command === 'help') {
+                const helpMsg: ChatMessage = {
+                    _id: 'local-' + Date.now(),
+                    roomId: activeRoom._id,
+                    senderId: 'system',
+                    content: "Available commands:\n/roll - Roll a die\n/flip - Flip a coin\n/8ball <question>\n/shrug\n/flip-table\n/vote <question> options: a,b,c\nGroup Admin: /promote @user, /demote @user, /kick @user, /mute @user <duration>, /unmute @user\nGroup: /whisper @user <msg>, /request <action> @user [reason], /requests, /approve <id>, /deny <id>",
+                    seenBy: [],
+                    isDeleted: false,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+                setMessages(prev => [...prev, helpMsg]);
+                setInput('');
+                return;
+            } else if (command === 'roll') {
+                const result = Math.floor(Math.random() * 6) + 1;
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} rolled a ${result} 🎲` });
+                setInput(''); return;
+            } else if (command === 'flip') {
+                const result = Math.random() > 0.5 ? 'Heads' : 'Tails';
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} flipped a coin: ${result} 🪙` });
+                setInput(''); return;
+            } else if (command === '8ball') {
+                const question = args.slice(1).join(' ');
+                const answers = ["It is certain.", "It is decidedly so.", "Without a doubt.", "Yes - definitely.", "You may rely on it.", "As I see it, yes.", "Most likely.", "Outlook good.", "Yes.", "Signs point to yes.", "Reply hazy, try again.", "Ask again later.", "Better not tell you now.", "Cannot predict now.", "Concentrate and ask again.", "Don't count on it.", "My reply is no.", "My sources say no.", "Outlook not so good.", "Very doubtful."];
+                const answer = answers[Math.floor(Math.random() * answers.length)];
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} asks the 8-Ball: ${question}\nAnswer: ${answer} 🎱` });
+                setInput(''); return;
+            } else if (command === 'shrug') {
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} ¯\\_(ツ)_/¯` });
+                setInput(''); return;
+            } else if (command === 'flip-table') {
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} (╯°□°)╯︵ ┻━┻` });
+                setInput(''); return;
+            } else if (command === 'vote') {
+                const rest = args.slice(1).join(' ');
+                const [question, optionsStr] = rest.split('options:');
+                if (question && optionsStr) {
+                    const options = optionsStr.split(',').map((o, i) => ({ id: String(i), text: o.trim() }));
+                    finalContent = JSON.stringify({ type: 'poll', question: question.trim(), options });
+                } else {
+                    return; // invalid poll
+                }
+            } else if (command === 'promote') {
+                const targetId = findUser(args[1]);
+                if (targetId) promoteMember(activeRoom._id, targetId);
+                setInput(''); return;
+            } else if (command === 'demote') {
+                const targetId = findUser(args[1]);
+                if (targetId) demoteMember(activeRoom._id, targetId);
+                setInput(''); return;
+            } else if (command === 'kick') {
+                const targetId = findUser(args[1]);
+                if (targetId) removeMember(activeRoom._id, targetId);
+                setInput(''); return;
+            } else if (command === 'mute') {
+                const targetId = findUser(args[1]);
+                const duration = args[2] || '10m';
+                let ms = 10 * 60 * 1000;
+                if (duration.endsWith('h')) ms = parseInt(duration) * 60 * 60 * 1000;
+                else if (duration.endsWith('m')) ms = parseInt(duration) * 60 * 1000;
+                if (targetId && socket) socket.emit('muteMember', { roomId: activeRoom._id, memberId: targetId, durationMs: ms });
+                setInput(''); return;
+            } else if (command === 'unmute') {
+                const targetId = findUser(args[1]);
+                if (targetId && socket) socket.emit('unmuteMember', { roomId: activeRoom._id, memberId: targetId });
+                setInput(''); return;
+            } else if (command === 'whisper') {
+                const targetId = findUser(args[1]);
+                const msg = args.slice(2).join(' ');
+                if (targetId && msg) {
+                    let dmRoom = rooms.find(r => r.kind === 'dm' && r.members.some(m => m.userId === targetId));
+                    const sendWhisper = async () => {
+                        if (!dmRoom) dmRoom = await createRoom({ kind: 'dm', members: [targetId] });
+                        socketSend({ recipientUserId: targetId, senderUserId: currentUserId, roomId: dmRoom._id, content: msg });
+                    };
+                    sendWhisper();
+                }
+                setInput(''); return;
+            } else if (command === 'request') {
+                const type = args[1]; // kick, promote, demote, mute
+                const targetId = findUser(args[2]);
+                const reason = args.slice(3).join(' ');
+                if (targetId && socket) socket.emit('createRequest', { roomId: activeRoom._id, type, targetUserId: targetId, reason });
+                setInput(''); return;
+            } else if (command === 'requests') {
+                const reqs = activeRoom.pendingRequests || [];
+                const msg = reqs.map(r => `[${r.id}] ${r.type} @${profiles[r.targetUserId]?.displayName} (by @${profiles[r.requestedBy]?.displayName}) - ${r.reason}`).join('\n') || 'No pending requests';
+                const helpMsg: ChatMessage = {
+                    _id: 'local-' + Date.now(), roomId: activeRoom._id, senderId: 'system',
+                    content: "Pending Requests:\n" + msg,
+                    seenBy: [], isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+                };
+                setMessages(prev => [...prev, helpMsg]);
+                setInput(''); return;
+            } else if (command === 'approve') {
+                if (socket) socket.emit('approveRequest', { roomId: activeRoom._id, requestId: args[1] });
+                const req = activeRoom.pendingRequests?.find(r => r.id === args[1]);
+                if (req) {
+                    if (req.type === 'kick') removeMember(activeRoom._id, req.targetUserId);
+                    if (req.type === 'promote') promoteMember(activeRoom._id, req.targetUserId);
+                    if (req.type === 'demote') demoteMember(activeRoom._id, req.targetUserId);
+                    if (req.type === 'mute' && socket) socket.emit('muteMember', { roomId: activeRoom._id, memberId: req.targetUserId, durationMs: 10 * 60 * 1000 });
+                    if (req.type === 'unmute' && socket) socket.emit('unmuteMember', { roomId: activeRoom._id, memberId: req.targetUserId });
+                }
+                setInput(''); return;
+            } else if (command === 'deny') {
+                if (socket) socket.emit('denyRequest', { roomId: activeRoom._id, requestId: args[1] });
+                setInput(''); return;
+            }
+        }
+
+        const isGroupChat = activeRoom.kind === 'group';
+        const recipientUserId = isGroupChat ? undefined : activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!isGroupChat && !recipientUserId) {
             toast.error("Cannot send E2EE message: recipient not found")
             return
         }
-        
+
         const replyToId = replyingTo?._id;
         const oldReplyingTo = replyingTo;
 
@@ -1454,12 +1716,12 @@ const ChatInner = () => {
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         if (typingTimer.current) clearTimeout(typingTimer.current)
         emitStopTyping(activeRoom._id)
-        
+
         try {
-            await socketSend({ recipientUserId, senderUserId: currentUserId, roomId: activeRoom._id, content: text, replyTo: replyToId })
+            await socketSend({ recipientUserId, senderUserId: currentUserId, roomId: activeRoom._id, content: finalContent, replyTo: replyToId, isGroupChat })
         } catch (err) {
             toast.error("Failed to send message")
-            setInput(text)
+            setInput(finalContent)
             setReplyingTo(oldReplyingTo)
         }
     }, [input, activeRoom, replyingTo, currentUserId])
@@ -1472,12 +1734,13 @@ const ChatInner = () => {
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file || !activeRoom) return
-        const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId
-        if (!recipientUserId) {
+        const isGroupChat = activeRoom.kind === 'group';
+        const recipientUserId = isGroupChat ? undefined : activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!isGroupChat && !recipientUserId) {
             toast.error("Cannot upload: recipient not found")
             return
         }
-        
+
         setUploadingFile(true)
         try {
             const res = await uploadFile(file)
@@ -1486,6 +1749,7 @@ const ChatInner = () => {
                 senderUserId: currentUserId,
                 roomId: activeRoom._id,
                 content: '',
+                isGroupChat,
                 attachments: [{ url: res.url, contentType: file.type, fileSize: file.size }],
                 replyTo: replyingTo?._id
             })
@@ -1502,8 +1766,9 @@ const ChatInner = () => {
     // ── Handle Audio Send ─────────────────────────────────────────────────
     const handleAudioSend = useCallback(async (blob: Blob, durationMs: number) => {
         if (!activeRoom) return;
-        const recipientUserId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
-        if (!recipientUserId) {
+        const isGroupChat = activeRoom.kind === 'group';
+        const recipientUserId = isGroupChat ? undefined : activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!isGroupChat && !recipientUserId) {
             toast.error("Cannot send: recipient not found");
             return;
         }
@@ -1515,7 +1780,7 @@ const ChatInner = () => {
             const { encryptedBlob, blobKeyB64, blobNonceB64 } = await encryptBlob(rawBytes);
 
             // 2. Upload the encrypted blob to the file service
-            const encryptedFile = new File([encryptedBlob], 'voice.enc', { type: 'application/octet-stream' });
+            const encryptedFile = new File([encryptedBlob as any], 'voice.enc', { type: 'application/octet-stream' });
             const res = await uploadFile(encryptedFile);
 
             // 3. Send the message with encrypted metadata via the E2EE ratchet
@@ -1528,6 +1793,7 @@ const ChatInner = () => {
                 blobNonceB64,
                 fileSize: encryptedBlob.length,
                 durationMs,
+                isGroupChat
             });
         } catch (err: any) {
             const msg = err?.response?.data?.message || err.message || "Unknown error";
@@ -1540,8 +1806,9 @@ const ChatInner = () => {
     // ── Handle Forward ────────────────────────────────────────────────────
     const handleForward = useCallback(async (targetRoom: Room) => {
         if (!forwardingMessage) return;
-        const recipientUserId = targetRoom.members.find(m => m.userId !== currentUserId)?.userId;
-        if (!recipientUserId) {
+        const isGroupChat = targetRoom.kind === 'group';
+        const recipientUserId = isGroupChat ? undefined : targetRoom.members.find(m => m.userId !== currentUserId)?.userId;
+        if (!isGroupChat && !recipientUserId) {
             toast.error("Cannot forward: recipient not found");
             return;
         }
@@ -1550,6 +1817,7 @@ const ChatInner = () => {
                 recipientUserId,
                 senderUserId: currentUserId,
                 targetRoomId: targetRoom._id,
+                isGroupChat,
                 originalMessage: forwardingMessage,
             });
             toast.success("Message forwarded!");
@@ -1665,7 +1933,7 @@ const ChatInner = () => {
                     </button>
                 </div>
             )}
-            
+
             <style>{`
                 @keyframes typing-dot {
                     0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
@@ -1704,16 +1972,21 @@ const ChatInner = () => {
                             <div className='flex justify-center py-10'><Loader2 size={24} className='animate-spin text-[#ff4d00]' /></div>
                         ) : rooms.length === 0 ? (
                             <p className='text-center text-[#555] text-xs py-10'>No conversations yet</p>
-                        ) : rooms.map(room => (
-                            <RoomItem
-                                key={room._id}
-                                room={room}
-                                isActive={activeRoom?._id === room._id}
-                                currentUserId={currentUserId}
-                                onClick={() => setActiveRoom(room)}
-                                profiles={profiles}
-                            />
-                        ))}
+                        ) : rooms.map(room => {
+                            const otherId = room.kind === 'dm' ? room.members.find(m => m.userId !== currentUserId)?.userId : null;
+                            const hasUnseenStory = (otherId && otherId !== currentUserId) ? storiesFeed.some(entry => entry._id === otherId && entry.stories.some(s => !(s.viewedBy && s.viewedBy[currentUserId]))) : false;
+                            return (
+                                <RoomItem
+                                    key={room._id}
+                                    room={room}
+                                    isActive={activeRoom?._id === room._id}
+                                    currentUserId={currentUserId}
+                                    onClick={() => setActiveRoom(room)}
+                                    profiles={profiles}
+                                    hasUnseenStory={hasUnseenStory}
+                                />
+                            )
+                        })}
                     </div>
                 </div>
 
@@ -1736,7 +2009,7 @@ const ChatInner = () => {
                                         const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
                                         const otherProfile = otherId ? profiles[otherId] : null;
                                         const avatar = activeRoom.kind === 'dm' ? otherProfile?.avatar : activeRoom.avatar;
-                                        const title = activeRoom.kind === 'dm' 
+                                        const title = activeRoom.kind === 'dm'
                                             ? (otherProfile?.displayName ?? 'Direct Message')
                                             : (activeRoom.name ?? 'Group Chat');
 
@@ -1749,12 +2022,12 @@ const ChatInner = () => {
                                         );
                                     })()}
                                 </div>
-                                <div 
+                                <div
                                     className={`flex flex-col ${activeRoom.kind === 'group' ? 'cursor-pointer hover:opacity-80' : ''}`}
                                     onClick={() => activeRoom.kind === 'group' && setShowGroupInfo(true)}
                                 >
                                     <p className={`text-white font-bold text-base ${activeRoom.kind === 'group' ? 'underline decoration-[#ff4d00]/50 underline-offset-2' : ''}`}>
-                                        {activeRoom.kind === 'dm' 
+                                        {activeRoom.kind === 'dm'
                                             ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message')
                                             : (activeRoom.name ?? 'Group Chat')}
                                     </p>
@@ -1777,6 +2050,11 @@ const ChatInner = () => {
                                         <p className='text-[#666] text-xs mt-0.5'>{activeRoom.members.length} members</p>
                                     )}
                                 </div>
+                                <div className="flex-1" />
+                                <VideoCallOverlay
+                                    roomId={activeRoom._id}
+                                    activeRoomName={activeRoom.kind === 'dm' ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message') : (activeRoom.name ?? 'Group Chat')}
+                                />
                             </div>
 
                             {/* Messages */}
@@ -1797,22 +2075,37 @@ const ChatInner = () => {
                                                         targetMsg = { _id: msg.replyTo, content: "Original message...", senderId: "" } as any;
                                                     }
                                                     const targetName = targetMsg ? (targetMsg.senderId === currentUserId ? 'yourself' : (targetMsg.senderId ? profiles[targetMsg.senderId]?.displayName || 'someone' : 'someone')) : undefined;
+                                                    
+                                                    if (msg.senderId === 'system') {
+                                                        return (
+                                                            <div key={msg._id} className="w-full flex justify-center my-2">
+                                                                <div className="bg-[#252525] text-[#888] text-xs px-4 py-1.5 rounded-full border border-[#353535] max-w-[85%] text-center whitespace-pre-wrap">
+                                                                    {msg.content}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    
                                                     return (
-                                                    <MessageBubble 
-                                                        key={msg._id} 
-                                                        msg={msg} 
-                                                        isMine={msg.senderId === currentUserId} 
-                                                        currentUserId={currentUserId}
-                                                        onReply={() => setReplyingTo(msg)}
-                                                        onForward={() => setForwardingMessage(msg)}
-                                                        replyTarget={targetMsg}
-                                                        replyTargetName={targetName}
-                                                        onReact={(emoji) => {
-                                                            if (activeRoom) reactToMessage(activeRoom._id, msg._id, emoji)
-                                                        }}
-                                                        onReplyClick={handleReplyClick}
-                                                    />
-                                                )})}
+                                                        <MessageBubble
+                                                            key={msg._id}
+                                                            msg={msg}
+                                                            isMine={msg.senderId === currentUserId}
+                                                            currentUserId={currentUserId}
+                                                            onReply={() => setReplyingTo(msg)}
+                                                            onForward={() => setForwardingMessage(msg)}
+                                                            replyTarget={targetMsg}
+                                                            replyTargetName={targetName}
+                                                            onReact={(emoji) => {
+                                                                if (activeRoom) reactToMessage(activeRoom._id, msg._id, emoji)
+                                                            }}
+                                                            onReplyClick={handleReplyClick}
+                                                            onVotePoll={(msgId, optionId) => {
+                                                                if (socket && activeRoom) socket.emit('voteOnPoll', { roomId: activeRoom._id, messageId: msgId, optionId })
+                                                            }}
+                                                        />
+                                                    )
+                                                })}
                                             </React.Fragment>
                                         ))}
                                         {isTyping && <TypingIndicator />}
@@ -1834,13 +2127,68 @@ const ChatInner = () => {
                                 </div>
                             )}
                             <div className={`flex-shrink-0 px-4 py-3 bg-[#1c1c1c] ${replyingTo ? '' : 'border-t-2 border-[#2a2a2a]'} flex items-end gap-3 relative`} ref={emojiPickerRef}>
+                                {filteredCommands.length > 0 && (
+                                    <div className="absolute bottom-full left-4 mb-2 bg-[#252525] border border-[#353535] p-2 flex flex-col gap-1 w-[300px] max-h-[250px] overflow-y-auto z-50 rounded-lg shadow-xl" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}>
+                                        {filteredCommands.map(c => (
+                                            <button
+                                                key={c.command}
+                                                onClick={() => {
+                                                    setInput(c.command + ' ');
+                                                    textareaRef.current?.focus();
+                                                }}
+                                                className="text-left p-2 hover:bg-[#353535] flex flex-col group transition-colors cursor-pointer rounded"
+                                            >
+                                                <span className="text-[#ff4d00] font-bold group-hover:text-white transition-colors">{c.command}</span>
+                                                <span className="text-xs text-[#888]">{c.description}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {commandHint && (
+                                    <div className="absolute bottom-full left-4 mb-2 bg-[#252525] border border-[#ff4d00] p-3 flex flex-col gap-1 w-auto max-w-[400px] z-50 rounded-lg shadow-xl" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}>
+                                        <span className="text-[#ff4d00] font-bold text-xs uppercase tracking-wider">Command Usage</span>
+                                        <span className="text-white font-mono text-sm bg-black/30 p-1.5 rounded">{commandHint.usage}</span>
+                                        <span className="text-[#888] text-xs mt-1">{commandHint.description}</span>
+                                    </div>
+                                )}
+                                {mentionSuggestions.length > 0 && (
+                                    <div className="absolute bottom-full left-4 mb-2 bg-[#252525] border border-[#353535] p-2 flex flex-col gap-1 w-[250px] max-h-[250px] overflow-y-auto z-50 rounded-lg shadow-xl" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}>
+                                        {mentionSuggestions.map(user => (
+                                            <button
+                                                key={user.id}
+                                                onClick={() => {
+                                                    const match = input.match(/(?:^|\s)(@\w*)$/);
+                                                    if (match) {
+                                                        const replacement = `@${user.username} `;
+                                                        const newInput = input.substring(0, match.index) + (match[0].startsWith(' ') ? ' ' : '') + replacement;
+                                                        setInput(newInput);
+                                                        textareaRef.current?.focus();
+                                                    }
+                                                }}
+                                                className="text-left p-2 hover:bg-[#353535] flex items-center gap-3 group transition-colors cursor-pointer rounded"
+                                            >
+                                                {user.avatar ? (
+                                                    <img src={user.avatar} alt={user.displayName} className="w-6 h-6 rounded-full object-cover" />
+                                                ) : (
+                                                    <div className='h-6 w-6 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-xs'>
+                                                        {user.displayName[0]?.toUpperCase()}
+                                                    </div>
+                                                )}
+                                                <div className="flex flex-col">
+                                                    <span className="text-white font-bold text-sm group-hover:text-[#ff4d00] transition-colors">{user.displayName}</span>
+                                                    <span className="text-xs text-[#888]">@{user.username}</span>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                                 {showEmojiPicker && (
                                     <div className="absolute bottom-full left-4 mb-2 z-50 shadow-2xl">
-                                        <EmojiPicker 
-                                            theme={Theme.DARK} 
+                                        <EmojiPicker
+                                            theme={Theme.DARK}
                                             onEmojiClick={(emojiData: EmojiClickData) => {
                                                 setInput(prev => prev + emojiData.emoji)
-                                            }} 
+                                            }}
                                         />
                                     </div>
                                 )}
@@ -1851,12 +2199,12 @@ const ChatInner = () => {
                                 >
                                     <Smile size={20} />
                                 </button>
-                                
-                                <input 
-                                    type="file" 
-                                    ref={fileInputRef} 
-                                    onChange={handleFileUpload} 
-                                    className="hidden" 
+
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    onChange={handleFileUpload}
+                                    className="hidden"
                                 />
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
@@ -1891,26 +2239,29 @@ const ChatInner = () => {
                 {/* ── Right sidebar – navigation ─────────────────────────────── */}
                 <div className='h-14 w-full md:h-full md:w-[5%] bg-[#252525] border-t-2 md:border-l-2 md:border-t-0 border-[#353535] flex-shrink-0 flex flex-row md:flex-col items-center justify-around md:justify-start py-0 md:py-5 gap-2 order-last md:order-last'>
                     {[
-                        { href: '/chat',       icon: <MessageSquare size={18} />, title: 'Chats'      },
-                        { href: '/search',     icon: <Search        size={18} />, title: 'Search'     },
-                        { href: '/buddies',    icon: <Users         size={18} />, title: 'Buddies'    },
-                        { href: '/settings',   icon: <Settings      size={18} />, title: 'Settings'   },
-                        { href: '/profile/me', icon: <UserCircle    size={18} />, title: 'My Profile' },
-                    ].map(({ href, icon, title }) => {
+                        { href: '/chat', icon: <MessageSquare size={18} />, title: 'Chats' },
+                        { href: '/stories', icon: <Play size={18} />, title: 'Stories', dot: hasAnyUnseenStory },
+                        { href: '/search', icon: <Search size={18} />, title: 'Search' },
+                        { href: '/buddies', icon: <Users size={18} />, title: 'Buddies' },
+                        { href: '/settings', icon: <Settings size={18} />, title: 'Settings' },
+                        { href: '/profile/me', icon: <UserCircle size={18} />, title: 'My Profile' },
+                    ].map(({ href, icon, title, dot }) => {
                         const isActive = pathname === href
                         return (
                             <Link
                                 key={href}
                                 href={href}
                                 title={title}
-                                className={`w-10 h-10 flex items-center justify-center transition-colors ${
-                                    isActive
+                                className={`w-10 h-10 flex items-center justify-center transition-colors relative ${isActive
                                         ? 'bg-[#ff4d00]/15 text-[#ff4d00]'
                                         : 'text-[#555] hover:text-[#ff4d00] hover:bg-[#ff4d00]/10'
-                                }`}
+                                    }`}
                                 style={{ clipPath: 'polygon(6px 0%,100% 0%,100% calc(100% - 6px),calc(100% - 6px) 100%,0% 100%,0% 6px)' }}
                             >
                                 {icon}
+                                {dot && (
+                                    <span className='absolute top-1 right-1 w-2.5 h-2.5 bg-[#ff4d00] rounded-full border-2 border-[#252525]' />
+                                )}
                             </Link>
                         )
                     })}

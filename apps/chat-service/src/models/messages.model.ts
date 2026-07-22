@@ -20,20 +20,7 @@ const messageSchema = new mongoose.Schema({
     },
     deviceCiphertexts: {
         type: Map,
-        of: {
-            ciphertext: { type: String, required: true },
-            nonce: { type: String, required: true },
-            messageIndex: { type: Number, required: true },
-            myRatchetPub: { type: String, required: true },
-            x3dhInit: {
-                type: {
-                    identityPublicKey: { type: String, required: true },
-                    ephemeralPublicKey: { type: String, required: true },
-                    usedOneTimePrekeyId: { type: Number, default: null }
-                },
-                default: null
-            }
-        },
+        of: mongoose.Schema.Types.Mixed,
         default: {}
     },
     attachments: {
@@ -95,12 +82,13 @@ const messageSchema = new mongoose.Schema({
         deliveredDevices: { type: [String], default: [] },
         deliveredAt: { type: Date, default: null }
     },
+    pollVotes: {
+        type: Map,
+        of: String,
+        default: {}
+    },
     x3dhInit: {
-        type: {
-            identityPublicKey: { type: String, required: true },
-            ephemeralPublicKey: { type: String, required: true },
-            usedOneTimePrekeyId: { type: Number, default: null }
-        },
+        type: mongoose.Schema.Types.Mixed,
         default: null
     }
 }, { timestamps: true });
