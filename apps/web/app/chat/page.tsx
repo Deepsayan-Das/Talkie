@@ -30,6 +30,16 @@ const CLIP_BTN = 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)'
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
 const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
 
+export const TALKIE_BOT_PROFILE: UserProfile = {
+    id: '00000000-0000-0000-0000-000000000001',
+    username: 'TalkieBot',
+    displayName: 'TalkieBot',
+    bio: 'Official Talkie AI Assistant. Tag @TalkieBot in group chats or send a direct message anytime!',
+    avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=TalkieBot',
+    email: 'talkiebot@talkie.internal',
+    isOnline: true,
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(d: Date): string {
     const today = new Date()
@@ -91,6 +101,7 @@ function formatDuration(ms: number): string {
 }
 
 const COMMANDS = [
+    { command: '@TalkieBot', description: 'Ask TalkieBot AI assistant anything', usage: '@TalkieBot <your question>' },
     { command: '/help', description: 'List available commands', usage: '/help' },
     { command: '/roll', description: 'Roll a die', usage: '/roll' },
     { command: '/flip', description: 'Flip a coin', usage: '/flip' },
@@ -883,8 +894,12 @@ const CreateGroupModal = ({
             const accepted = relations.filter(r => r.status === 'accepted')
             const buddyIds = accepted.map(r => r.requester_id === user?.id ? r.receiver_id : r.requester_id)
             const profs = await Promise.all(buddyIds.map(id => getUserProfile(id).catch(() => null)))
-            setBuddies(profs.filter(Boolean).map(p => ({ id: p!.id, name: p!.displayName })))
-            setLoading(false)
+            const list = profs.filter(Boolean).map(p => ({ id: p!.id, name: p!.displayName }));
+            if (!list.some(b => b.id === TALKIE_BOT_PROFILE.id)) {
+                list.unshift({ id: TALKIE_BOT_PROFILE.id, name: 'TalkieBot 🤖 (AI Assistant)' });
+            }
+            setBuddies(list);
+            setLoading(false);
         }).catch(() => {
             toast.error("Failed to load buddies")
             setLoading(false)
@@ -1281,10 +1296,17 @@ const ChatInner = () => {
         if (lastWordMatch && activeRoom) {
             const typedMention = lastWordMatch[1].slice(1).toLowerCase();
             const members = activeRoom.members
-                .map(m => profiles[m.userId])
-                .filter(Boolean); // get profiles for all members
+                .map(m => profiles[m.userId] || (m.userId === TALKIE_BOT_PROFILE.id ? TALKIE_BOT_PROFILE : null))
+                .filter(Boolean) as UserProfile[];
             
-            mentions = members.filter(p => p.displayName.toLowerCase().startsWith(typedMention) || p.username.toLowerCase().startsWith(typedMention));
+            if (!members.some(p => p.id === TALKIE_BOT_PROFILE.id)) {
+                members.push(TALKIE_BOT_PROFILE);
+            }
+
+            mentions = members.filter(p =>
+                p.displayName.toLowerCase().includes(typedMention) ||
+                p.username.toLowerCase().includes(typedMention)
+            );
         }
 
         // Command suggestions logic

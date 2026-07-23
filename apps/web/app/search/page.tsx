@@ -104,8 +104,52 @@ export default function SearchPage() {
                             <Loader2 size={24} className='animate-spin text-[#ff4d00]' />
                         </div>
                     ) : !query.trim() ? (
-                        <div className={`text-center py-16 text-[#444] ${anybody.className}`}>
-                            <p className='text-base'>Type to search for people</p>
+                        <div className='flex flex-col gap-4 mt-2'>
+                            <div className='flex items-center justify-between border-b border-[#2a2a2a] pb-2'>
+                                <span className={`text-xs font-bold uppercase tracking-wider text-[#ff4d00] ${anybody.className}`}>
+                                    FEATURED AI ASSISTANT 🤖
+                                </span>
+                            </div>
+                            <div
+                                className='flex items-center gap-4 bg-[#1c1c1c] border-2 border-[#ff4d00]/40 hover:border-[#ff4d00] p-4 transition-colors cursor-pointer shadow-lg shadow-[#ff4d00]/5'
+                                style={{ clipPath: CLIP_SM }}
+                                onClick={() => router.push(`/profile/00000000-0000-0000-0000-000000000001`)}
+                            >
+                                <div className='relative flex-shrink-0'>
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src='https://api.dicebear.com/7.x/bottts/svg?seed=TalkieBot' alt='TalkieBot' className='w-12 h-12 rounded-full object-cover border-2 border-[#ff4d00]' />
+                                    <span className='absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-[#1c1c1c]' />
+                                </div>
+
+                                <div className='flex-1 min-w-0'>
+                                    <div className='flex items-center gap-2'>
+                                        <p className='text-white font-black text-sm'>TalkieBot</p>
+                                        <span className='px-1.5 py-0.5 bg-[#ff4d00]/20 border border-[#ff4d00]/60 text-[#ff4d00] text-[10px] font-bold rounded uppercase tracking-wider'>AI BOT</span>
+                                        <p className='text-[#666] text-xs'>@TalkieBot</p>
+                                    </div>
+                                    <p className={`text-[#aaa] text-xs mt-1 line-clamp-2 ${anybody.className} font-light`}>
+                                        Official Talkie AI Assistant. Tag @TalkieBot in group chats or send a direct message anytime!
+                                    </p>
+                                </div>
+
+                                <div className='flex gap-2 flex-shrink-0' onClick={e => e.stopPropagation()}>
+                                    {requested.has('00000000-0000-0000-0000-000000000001') ? (
+                                        <span className={`px-3 h-8 flex items-center text-[10px] font-bold text-[#ff4d00] bg-[#ff4d00]/10 ${anybody.className}`}>
+                                            ADDED
+                                        </span>
+                                    ) : (
+                                        <button
+                                            title='Add TalkieBot as Buddy'
+                                            onClick={() => handleAdd('00000000-0000-0000-0000-000000000001')}
+                                            className='px-3 h-8 flex items-center gap-1.5 bg-[#ff4d00] text-white hover:bg-[#e04500] transition-colors text-xs font-bold'
+                                            style={{ clipPath: CLIP_SM }}
+                                        >
+                                            <UserPlus size={14} />
+                                            <span>ADD</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     ) : results.length === 0 ? (
                         <div className={`text-center py-16 text-[#444] ${anybody.className}`}>

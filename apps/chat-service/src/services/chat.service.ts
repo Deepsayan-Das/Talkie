@@ -86,7 +86,12 @@ export const addMember = async (roomId: string, userId: string, memberId: string
     return { message: "Member added successfully" };
 }
 
+export const TALKIE_BOT_ID = "00000000-0000-0000-0000-000000000001";
+
 export const removeMember = async (roomId: string, userId: string, memberId: string) => {
+    if (memberId === TALKIE_BOT_ID) {
+        throw new Error("TalkieBot is a system AI assistant and cannot be removed from groups");
+    }
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) {
         throw new Error("Room not found");
@@ -106,6 +111,9 @@ export const removeMember = async (roomId: string, userId: string, memberId: str
 }
 
 export const promoteMember = async (roomId: string, userId: string, memberId: string) => {
+    if (memberId === TALKIE_BOT_ID) {
+        throw new Error("TalkieBot is a system AI assistant and cannot be promoted");
+    }
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) {
         throw new Error("Room not found");
@@ -125,6 +133,9 @@ export const promoteMember = async (roomId: string, userId: string, memberId: st
 }
 
 export const demoteMember = async (roomId: string, userId: string, memberId: string) => {
+    if (memberId === TALKIE_BOT_ID) {
+        throw new Error("TalkieBot is a system AI assistant and cannot be demoted");
+    }
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) {
         throw new Error("Room not found");
@@ -325,6 +336,7 @@ export const voteOnPoll = async (roomId: string, messageId: string, userId: stri
 }
 
 export const muteMember = async (roomId: string, adminId: string, memberId: string, durationMs: number) => {
+    if (memberId === TALKIE_BOT_ID) throw new Error("TalkieBot is a system AI assistant and cannot be muted");
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) throw new Error("Room not found");
     const admin = room.members.find(m => m.userId === adminId);
@@ -335,6 +347,7 @@ export const muteMember = async (roomId: string, adminId: string, memberId: stri
 }
 
 export const unmuteMember = async (roomId: string, adminId: string, memberId: string) => {
+    if (memberId === TALKIE_BOT_ID) throw new Error("TalkieBot is a system AI assistant and cannot be muted or unmuted");
     const room = await RoomRepository.findRoomById(roomId);
     if (!room) throw new Error("Room not found");
     const admin = room.members.find(m => m.userId === adminId);

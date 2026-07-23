@@ -2,6 +2,7 @@ import { Server, Socket } from "socket.io";
 import { Server as HttpServer } from "http";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import * as ChatService from "../services/chat.service";
+import { processTalkieBotMessage } from "../services/talkiebot.service";
 import logger from "../config/logger";
 import redis from "../config/redis";
 import { broker } from "../config/broker";
@@ -99,6 +100,16 @@ export const initSocketHandler = (httpServer: HttpServer) => {
                 );
                 io.to(data.roomId).emit('newMessage', message);
                 logger.info('Message sent successfully', { userId: socket.data.userId, roomId: data.roomId, messageId: message.id });
+
+                // Asynchronously trigger TalkieBot processing
+                (async () => {
+                    try {
+                        const room = await ChatService.getRoomById(data.roomId);
+                        await processTalkieBotMessage(io, message, room);
+                    } catch (botErr: any) {
+                        logger.error('Error invoking TalkieBot processor', { error: botErr.message });
+                    }
+                })();
             } catch (err: any) {
                 logger.error('sendMessage failed', { userId: socket.data.userId, roomId: data.roomId, error: err.message });
                 socket.emit('error', { event: 'sendMessage', message: err.message });

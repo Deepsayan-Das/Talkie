@@ -19,6 +19,25 @@ app.get('/metrics', async (req, res) => {
     res.send(await metrics.register.metrics());
 });
 
+export const TALKIE_BOT_ID = '00000000-0000-0000-0000-000000000001';
+
+const ensureTalkieBotProfile = async () => {
+    try {
+        const bot = await db('users_profile').where({ user_id: TALKIE_BOT_ID }).first();
+        if (!bot) {
+            await db('users_profile').insert({
+                user_id: TALKIE_BOT_ID,
+                username: 'TalkieBot',
+                bio: 'Official Talkie AI Assistant. Tag @TalkieBot in group chats or DM me anytime!',
+                avatar_url: 'https://api.dicebear.com/7.x/bottts/svg?seed=TalkieBot',
+            });
+            logger.info('TalkieBot profile seeded successfully');
+        }
+    } catch (err: any) {
+        logger.warn('Failed to seed TalkieBot profile', { error: err.message });
+    }
+};
+
 const startup = async () => {
     const MAX_RETRIES = 10;
     const RETRY_DELAY_MS = 5000;
@@ -27,6 +46,7 @@ const startup = async () => {
         try {
             await db.raw('SELECT 1')
             logger.info('Database connection established')
+            await ensureTalkieBotProfile();
             const redis = (await import('./config/redis')).default;
             await redis.connect();
             logger.info('Redis connection established')

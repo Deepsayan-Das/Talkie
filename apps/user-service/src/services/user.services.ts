@@ -2,12 +2,26 @@ import { UpdateUserData } from "../models/user.model";
 import { addRelation, deleteRelation, findUserById, findUserByUsername, getAllRelations, getRelation, updateProfile, updateRelation } from "../repositories/user.repository"
 import logger from "../config/logger";
 
+export const TALKIE_BOT_ID = '00000000-0000-0000-0000-000000000001';
+
 export const sendBuddyReq = async (sender_id: string, receiver_id: string) => {
     logger.info('Sending buddy request', { sender_id, receiver_id });
     if (sender_id === receiver_id) {
         logger.warn('Buddy request blocked — cannot send request to yourself', { sender_id });
         throw new Error("you cannot send a friend request to yourself");
     }
+
+    if (receiver_id === TALKIE_BOT_ID) {
+        const relation = await getRelation(sender_id, receiver_id);
+        if (!relation) {
+            await addRelation(sender_id, receiver_id, 'accepted');
+        } else if (relation.status !== 'accepted') {
+            await updateRelation(sender_id, receiver_id, { status: 'accepted', updated_at: new Date() });
+        }
+        logger.info('Buddy request to TalkieBot auto-accepted', { sender_id });
+        return;
+    }
+
     const relation = await getRelation(sender_id, receiver_id);
     if (!relation) {
         //no entry create e request with pending status 
@@ -130,5 +144,10 @@ export const updateUserProfile = async (userId: string, data: UpdateUserData) =>
 
 export const searchUser = async (searchQuery: string) => {
     logger.info('Searching for user', { searchQuery });
+    const clean = searchQuery.replace(/^@/, '').trim().toLowerCase();
+    if (['talkiebot', 'talkie', 'bot', 'ai'].includes(clean)) {
+        const bot = await findUserById(TALKIE_BOT_ID).catch(() => null);
+        if (bot) return bot;
+    }
     return await findUserByUsername(searchQuery);
 }

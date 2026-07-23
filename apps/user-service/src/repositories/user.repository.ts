@@ -12,7 +12,10 @@ export const findUserById = async (userId: string): Promise<UserProfile> => {
 }
 
 export const findUserByUsername = async (username: string): Promise<UserProfile | null> => {
-    const user = await db<UserProfile>('users_profile').where({ username }).first();
+    const cleanUsername = username.replace(/^@/, '').trim();
+    const user = await db<UserProfile>('users_profile')
+        .whereILike('username', cleanUsername)
+        .first();
     if (!user) {
         return null;
     }
