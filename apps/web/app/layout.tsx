@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Talkie",
-  description: "Real-time chat app",
+  title: "Antigravity — Secure Communication System",
+  description: "Timeless, encrypted messaging platform",
 };
 
 export default function RootLayout({
@@ -28,9 +28,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col bg-[#080808] text-[#f4f4f5] selection:bg-white selection:text-black">
         <AuthProvider>
           <SocketProvider>
             {children}
@@ -41,13 +41,16 @@ export default function RootLayout({
           toastOptions={{
             duration: 4000,
             style: {
-              background: "#252525",
-              color: "#fff",
-              border: "1px solid #ff4d00",
-              borderRadius: "8px",
-              fontSize: "14px",
+              background: "#121212",
+              color: "#f4f4f5",
+              border: "1px solid #27272a",
+              borderRadius: "4px",
+              fontSize: "13px",
+              fontFamily: "var(--font-geist-mono), monospace",
+              boxShadow: "0 10px 30px -10px rgba(0, 0, 0, 0.8)",
             },
-            success: { iconTheme: { primary: "#ff4d00", secondary: "#252525" } },
+            success: { iconTheme: { primary: "#ffffff", secondary: "#000000" } },
+            error: { iconTheme: { primary: "#f87171", secondary: "#121212" } },
           }}
         />
       </body>

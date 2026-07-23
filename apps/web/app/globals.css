@@ -1,36 +1,82 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #080808;
+  --foreground: #f4f4f5;
+  --surface: #121212;
+  --surface-hover: #18181b;
+  --surface-border: #27272a;
+  --surface-border-light: #3f3f46;
+  --muted: #a1a1aa;
+  --accent: #ffffff;
+  --accent-inverted: #000000;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-border: var(--surface-border);
+  --color-surface-border-light: var(--surface-border-light);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-geist-mono), "JetBrains Mono", "Courier New", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
-body {
-  background: var(--background);
+html, body {
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Custom scrollbar ─────────────────────────────────────────────────────── */
+::selection {
+  background-color: #ffffff;
+  color: #000000;
+}
 
-/* Chromium / Safari */
+/* ── Antigravity Dot Grid & Structural Accents ────────────────────────── */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.bg-dot-matrix {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+
+.hairline-border {
+  border: 1px solid var(--surface-border);
+}
+
+.hairline-border-b {
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.hairline-border-t {
+  border-top: 1px solid var(--surface-border);
+}
+
+.hairline-border-r {
+  border-right: 1px solid var(--surface-border);
+}
+
+.hairline-border-l {
+  border-left: 1px solid var(--surface-border);
+}
+
+/* ── Custom Scrollbars ────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -38,22 +84,15 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3a3a3a;
-  border-radius: 999px;
-  transition: background 0.2s ease;
+  background: #27272a;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #ff4d00;
-  box-shadow: 0 0 6px rgba(255, 77, 0, 0.45);
+  background: #52525b;
 }
 
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-/* Firefox */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3a3a3a transparent;
+  scrollbar-color: #27272a transparent;
 }

@@ -1,73 +1,24 @@
 'use client'
+
 import React, { useState } from 'react'
-import { JetBrains_Mono, Anybody } from 'next/font/google'
 import { useForm } from 'react-hook-form'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence } from 'motion/react'
 import toast from 'react-hot-toast'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
-import { resendVerification } from '@/lib/auth'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Badge } from '@/components/ui/Badge'
+import { Eye, EyeOff, ShieldCheck, ArrowRight, Lock, Mail } from 'lucide-react'
 
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
-const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
-
-const clipPath = '[clip-path:polygon(20px_0%,100%_0%,100%_calc(100%-20px),calc(100%-20px)_100%,0%_100%,0%_20px)]'
-
-// ---------- Eye / EyeOff icons (inline, no extra deps) ----------
-const EyeIcon = ({ open }: { open: boolean }) =>
-    open ? (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
-            <circle cx="12" cy="12" r="3" />
-        </svg>
-    ) : (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
-            <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 11 7 11 7a13.16 13.16 0 0 1-1.67 2.68" />
-            <path d="M6.61 6.61A13.526 13.526 0 0 0 1 12s4 7 11 7a9.74 9.74 0 0 0 5.39-1.61" />
-            <path d="M1 1l22 22" />
-        </svg>
-    )
-
-// ---------- Reusable password input with show/hide toggle ----------
-type PasswordFieldProps = {
-    placeholder: string
-    // UseFormRegisterReturn from react-hook-form spread onto <input>
-    register: ReturnType<import('react-hook-form').UseFormRegister<Record<string, string>>>
-    error?: string
-}
-const PasswordField: React.FC<PasswordFieldProps> = ({ placeholder, register, error }) => {
-    const [visible, setVisible] = useState(false)
-    return (
-        <div className="w-[90%] flex flex-col">
-            <div className="relative w-full">
-                <input
-                    type={visible ? 'text' : 'password'}
-                    placeholder={placeholder}
-                    {...register}
-                    className={`w-full h-12 bg-[#353535] outline-none border-b-4 ${error ? 'border-b-red-500' : 'border-b-[#525252]'} px-4 pr-12 focus:border-b-[#ff4d00] transition-colors`}
-                />
-                <button
-                    type="button"
-                    onClick={() => setVisible((v) => !v)}
-                    tabIndex={-1}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#888] hover:text-[#ff4d00] transition-colors"
-                    aria-label={visible ? 'Hide password' : 'Show password'}
-                >
-                    <EyeIcon open={visible} />
-                </button>
-            </div>
-            {error && <span className={`text-red-500 text-xs mt-1 ${anybody.className} font-light`}>{error}</span>}
-        </div>
-    )
-}
-
-// ---------- Login form ----------
 type LoginValues = { email: string; password: string }
+type SignupValues = { email: string; password: string; confirmPassword: string }
 
+// ─── LoginForm Component ──────────────────────────────────────────────────
 const LoginForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
     const router = useRouter()
     const { login } = useAuth()
+    const [showPassword, setShowPassword] = useState(false)
     const {
         register,
         handleSubmit,
@@ -77,7 +28,7 @@ const LoginForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
 
     const onSubmit = async (data: LoginValues) => {
         try {
-            const user = await login(data.email, data.password)
+            await login(data.email, data.password)
             toast.success('Welcome back!')
             reset()
             router.push('/chat')
@@ -92,61 +43,89 @@ const LoginForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         <motion.form
             key="login"
             onSubmit={handleSubmit(onSubmit)}
-            initial={{ opacity: 0, x: -24 }}
+            initial={{ opacity: 0, x: -16 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 24 }}
-            transition={{ duration: 0.25, ease: 'easeInOut' }}
-            className="w-full h-full flex flex-col items-center justify-center gap-4"
+            exit={{ opacity: 0, x: 16 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="w-full flex flex-col gap-5 text-left"
         >
-            <h1 className="w-[60%] text-7xl font-black self-start ml-6">WELCOME BACK</h1>
-
-            <div className="w-[90%] flex flex-col">
-                <input
-                    type="text"
-                    placeholder="Email (eg. johnDoe@example.com)"
-                    {...register('email', {
-                        required: 'Email is required',
-                        pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' },
-                    })}
-                    className={`w-full h-12 bg-[#353535] outline-none border-b-4 ${errors.email ? 'border-b-red-500' : 'border-b-[#525252]'} px-4 focus:border-b-[#ff4d00] transition-colors`}
-                />
-                {errors.email && <span className={`text-red-500 text-xs mt-1 ${anybody.className} font-light`}>{errors.email.message}</span>}
+            <div className="flex flex-col gap-1 border-b border-[#27272a] pb-4">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-bold text-neutral-100 tracking-tight">
+                        Welcome back
+                    </h2>
+                    <Badge variant="active" dot>Encrypted</Badge>
+                </div>
+                <p className="text-xs text-neutral-400">
+                    Sign in to access your secure conversations.
+                </p>
             </div>
 
-            <PasswordField
-                placeholder="Password"
-                register={register('password', {
+            <Input
+                label="Email Address"
+                type="email"
+                placeholder="name@example.com"
+                leftElement={<Mail className="w-4 h-4 text-neutral-500" />}
+                error={errors.email?.message}
+                {...register('email', {
+                    required: 'Email is required',
+                    pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' },
+                })}
+            />
+
+            <Input
+                label="Password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••••••"
+                leftElement={<Lock className="w-4 h-4 text-neutral-500" />}
+                rightElement={
+                    <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="text-neutral-500 hover:text-neutral-200 transition-colors p-1 cursor-pointer"
+                    >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                }
+                error={errors.password?.message}
+                {...register('password', {
                     required: 'Password is required',
                     minLength: { value: 6, message: 'Must be at least 6 characters' },
                 })}
-                error={errors.password?.message as string}
             />
 
-            <motion.button
-                whileTap={{ scale: 0.97 }}
-                type="submit"
-                disabled={isSubmitting}
-                className={`w-[90%] h-15 bg-[#ff4d00] text-3xl ${clipPath} disabled:opacity-60`}
-            >
-                {isSubmitting ? '...' : 'LOGIN'}
-            </motion.button>
-
-            <span className={`font-light ${anybody.className} self-end mr-[10%]`}>
-                No account ?{' '}
-                <span className="text-[#ff4d00] cursor-pointer" onClick={onSwitch}>
-                    create one
+            <div className="flex items-center justify-between text-xs pt-1">
+                <span className="text-neutral-500">
+                    Don't have an account?
                 </span>
-            </span>
+                <button
+                    type="button"
+                    onClick={onSwitch}
+                    className="text-neutral-200 hover:text-white underline underline-offset-4 cursor-pointer font-medium"
+                >
+                    Create account →
+                </button>
+            </div>
+
+            <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                isLoading={isSubmitting}
+                className="w-full mt-2"
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+            >
+                LOG IN
+            </Button>
         </motion.form>
     )
 }
 
-// ---------- Signup form ----------
-type SignupValues = { email: string; password: string; confirmPassword: string }
-
+// ─── SignupForm Component ─────────────────────────────────────────────────
 const SignupForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
     const router = useRouter()
     const { register: registerUser } = useAuth()
+    const [showPassword, setShowPassword] = useState(false)
     const {
         register,
         handleSubmit,
@@ -156,27 +135,17 @@ const SignupForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
     } = useForm<SignupValues>({ mode: 'onTouched' })
 
     const password = watch('password')
-    const [unverifiedToken, setUnverifiedToken] = useState<string | null>(null)
 
     const onSubmit = async (data: SignupValues) => {
         try {
-            const user = await registerUser(data.email, data.password)
-            toast('Account created! Check your inbox for the verification email.', { icon: '📧', duration: 6000 })
+            await registerUser(data.email, data.password)
+            toast.success('Account created! Check inbox for verification.', { duration: 6000 })
             reset()
             router.push('/onboarding')
         } catch (err: any) {
             const msg = err.response?.data?.message ?? 'Registration failed'
-            if (msg === 'User already exists') toast.error('That email is already registered.')
+            if (msg === 'User already exists') toast.error('Email is already registered.')
             else toast.error(msg)
-        }
-    }
-
-    const handleResend = async () => {
-        try {
-            await resendVerification()
-            toast.success('Verification email resent!')
-        } catch (err: any) {
-            toast.error(err.response?.data?.message ?? 'Could not resend email')
         }
     }
 
@@ -184,100 +153,156 @@ const SignupForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         <motion.form
             key="signup"
             onSubmit={handleSubmit(onSubmit)}
-            initial={{ opacity: 0, x: 24 }}
+            initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            transition={{ duration: 0.25, ease: 'easeInOut' }}
-            className="w-full h-full flex flex-col items-center justify-center gap-4"
+            exit={{ opacity: 0, x: -16 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="w-full flex flex-col gap-4 text-left"
         >
-            <h1 className="w-[60%] text-7xl font-black self-start ml-6">JOIN NOW</h1>
-
-            <div className="w-[90%] flex flex-col">
-                <input
-                    type="text"
-                    placeholder="Email (eg. johnDoe@example.com)"
-                    {...register('email', {
-                        required: 'Email is required',
-                        pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' },
-                    })}
-                    className={`w-full h-12 bg-[#353535] outline-none border-b-4 ${errors.email ? 'border-b-red-500' : 'border-b-[#525252]'} px-4 focus:border-b-[#ff4d00] transition-colors`}
-                />
-                {errors.email && <span className={`text-red-500 text-xs mt-1 ${anybody.className} font-light`}>{errors.email.message}</span>}
+            <div className="flex flex-col gap-1 border-b border-[#27272a] pb-4">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-bold text-neutral-100 tracking-tight">
+                        Create Account
+                    </h2>
+                    <Badge variant="mono">Join Talkie</Badge>
+                </div>
+                <p className="text-xs text-neutral-400">
+                    Get started with end-to-end encrypted messaging.
+                </p>
             </div>
 
-            <PasswordField
-                placeholder="Password"
-                register={register('password', {
+            <Input
+                label="Email Address"
+                type="email"
+                placeholder="name@example.com"
+                leftElement={<Mail className="w-4 h-4 text-neutral-500" />}
+                error={errors.email?.message}
+                {...register('email', {
+                    required: 'Email is required',
+                    pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' },
+                })}
+            />
+
+            <Input
+                label="Password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••••••"
+                leftElement={<Lock className="w-4 h-4 text-neutral-500" />}
+                rightElement={
+                    <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="text-neutral-500 hover:text-neutral-200 transition-colors p-1 cursor-pointer"
+                    >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                }
+                error={errors.password?.message}
+                {...register('password', {
                     required: 'Password is required',
                     minLength: { value: 6, message: 'Must be at least 6 characters' },
                 })}
-                error={errors.password?.message as string}
             />
 
-            <PasswordField
-                placeholder="Confirm Password"
-                register={register('confirmPassword', {
+            <Input
+                label="Confirm Password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••••••"
+                leftElement={<Lock className="w-4 h-4 text-neutral-500" />}
+                error={errors.confirmPassword?.message}
+                {...register('confirmPassword', {
                     required: 'Please confirm your password',
                     validate: (value) => value === password || 'Passwords do not match',
                 })}
-                error={errors.confirmPassword?.message as string}
             />
 
-            <motion.button
-                whileTap={{ scale: 0.97 }}
-                type="submit"
-                disabled={isSubmitting}
-                className={`w-[90%] h-15 bg-[#ff4d00] text-3xl ${clipPath} disabled:opacity-60`}
-            >
-                {isSubmitting ? '...' : 'SIGNUP'}
-            </motion.button>
-
-            <span className={`font-light ${anybody.className} self-end mr-[10%]`}>
-                Already have an account ?{' '}
-                <span className="text-[#ff4d00] cursor-pointer" onClick={onSwitch}>
-                    login
+            <div className="flex items-center justify-between text-xs pt-1">
+                <span className="text-neutral-500">
+                    Already have an account?
                 </span>
-            </span>
+                <button
+                    type="button"
+                    onClick={onSwitch}
+                    className="text-neutral-200 hover:text-white underline underline-offset-4 cursor-pointer font-medium"
+                >
+                    Log in instead →
+                </button>
+            </div>
+
+            <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                isLoading={isSubmitting}
+                className="w-full mt-2"
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+            >
+                CREATE ACCOUNT
+            </Button>
         </motion.form>
     )
 }
 
-// ---------- Page ----------
+// ─── Main Page ─────────────────────────────────────────────────────────────
 const Page: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'login' | 'signup'>('login')
 
     return (
-        <div className={`h-screen w-full relative flex items-center justify-center bg-[#1c1c1c] ${jetbrains.className} font-extrabold`}>
-            <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, ease: 'easeOut' }}
-                className="h-[80%] w-[35%] relative flex flex-col"
-            >
-                <div className={`relative w-full h-[15%] bg-[#202020] flex items-center p-2 ${clipPath}`}>
-                    {/* Sliding Background */}
-                    <motion.div
-                        animate={{ left: activeTab === 'login' ? '0.5rem' : 'calc(50% + 0.25rem)' }}
-                        transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                        className={`absolute top-2 bottom-2 w-[calc(50%-8px)] bg-[#ff4d00] ${clipPath}`}
-                    />
+        <div className="min-h-screen w-full relative flex items-center justify-center bg-[#080808] bg-grid-pattern p-4 sm:p-6 overflow-hidden">
+            <div className="absolute w-[500px] h-[500px] bg-white/[0.02] rounded-full blur-3xl pointer-events-none" />
 
+            <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                className="relative w-full max-w-md bg-[#121212] border border-[#27272a] shadow-2xl rounded-sm p-6 sm:p-8 flex flex-col gap-6"
+            >
+                {/* Brand Header */}
+                <div className="flex items-center justify-between border-b border-[#27272a] pb-5">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-white text-black flex items-center justify-center font-bold text-sm rounded-xs">
+                            T
+                        </div>
+                        <div className="flex flex-col text-left">
+                            <span className="font-bold text-base text-neutral-100 tracking-tight">
+                                TALKIE
+                            </span>
+                            <span className="text-[11px] text-neutral-500">
+                                End-to-End Encrypted Messenger
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Tab Controls */}
+                <div className="grid grid-cols-2 p-1 bg-[#18181b] border border-[#27272a] rounded-sm text-xs relative">
                     <button
                         onClick={() => setActiveTab('login')}
-                        className="relative z-10 w-1/2 text-white text-2xl font-bold"
+                        className={`py-2 px-3 transition-colors cursor-pointer text-center relative z-10 font-semibold ${
+                            activeTab === 'login' ? 'text-black' : 'text-neutral-400 hover:text-neutral-200'
+                        }`}
                     >
                         LOGIN
                     </button>
-
                     <button
                         onClick={() => setActiveTab('signup')}
-                        className="relative z-10 w-1/2 text-white text-2xl font-bold"
+                        className={`py-2 px-3 transition-colors cursor-pointer text-center relative z-10 font-semibold ${
+                            activeTab === 'signup' ? 'text-black' : 'text-neutral-400 hover:text-neutral-200'
+                        }`}
                     >
                         SIGNUP
                     </button>
+
+                    <motion.div
+                        layout
+                        animate={{ x: activeTab === 'login' ? '0%' : '100%' }}
+                        transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                        className="absolute inset-y-1 left-1 w-[calc(50%-4px)] bg-white rounded-xs z-0"
+                    />
                 </div>
 
-                <div className="h-[85%] bg-[#252525] flex justify-center items-center overflow-hidden">
+                {/* Form Switcher */}
+                <div className="overflow-hidden">
                     <AnimatePresence mode="wait">
                         {activeTab === 'login' ? (
                             <LoginForm key="login" onSwitch={() => setActiveTab('signup')} />
@@ -285,6 +310,15 @@ const Page: React.FC = () => {
                             <SignupForm key="signup" onSwitch={() => setActiveTab('login')} />
                         )}
                     </AnimatePresence>
+                </div>
+
+                {/* Footer Security Notice */}
+                <div className="flex items-center justify-between pt-4 border-t border-[#27272a] text-xs text-neutral-500">
+                    <span className="flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-neutral-400" />
+                        <span>Zero-Knowledge E2EE</span>
+                    </span>
+                    <span>Talkie v1.1</span>
                 </div>
             </motion.div>
         </div>

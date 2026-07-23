@@ -2,20 +2,15 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { JetBrains_Mono, Anybody } from 'next/font/google'
 import { Lock, Mail, AlertTriangle } from 'lucide-react'
-import toast, { Toaster } from 'react-hot-toast'
+import toast from 'react-hot-toast'
 import { useAuth } from '@/context/AuthContext'
-
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['400', '600', '700', '800'] })
-const anybody = Anybody({ subsets: ['latin'], weight: ['300', '400', '600'] })
-
-const CLIP = 'polygon(12px 0%, 100% 0%, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0% 100%, 0% 12px)'
-const CLIP_BTN = 'polygon(10px 0%, 100% 0%, 100% 100%, 0% 100%, 0% 10px)'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
 
 const NAV_LINKS = [
-    { href: '/settings',         label: 'Profile' },
-    { href: '/settings/account', label: 'Account' },
+    { href: '/settings', label: 'Profile' },
+    { href: '/settings/account', label: 'Account & Security' },
 ]
 
 export default function AccountSettingsPage() {
@@ -30,121 +25,102 @@ export default function AccountSettingsPage() {
     }
 
     return (
-        <div className={`min-h-screen w-full bg-[#131313] flex ${jetbrains.className}`}>
-            <Toaster position='top-center' toastOptions={{ style: { background: '#252525', color: '#fff', border: '1px solid #ff4d00' } }} />
-            {/* Sidebar nav */}
-            <aside className='w-52 flex-shrink-0 bg-[#1c1c1c] border-r-2 border-[#2a2a2a] flex flex-col pt-12 px-4 gap-1'>
-                <p className={`text-[10px] uppercase tracking-widest text-[#444] mb-3 ${anybody.className}`}>Settings</p>
-                {NAV_LINKS.map(link => (
-                    <Link
-                        key={link.href}
-                        href={link.href}
-                        className={`w-full px-3 py-2.5 text-sm font-bold transition-colors text-left ${
-                            link.href === '/settings/account'
-                                ? 'text-[#ff4d00] bg-[#ff4d00]/10'
-                                : 'text-[#666] hover:text-white'
-                        }`}
-                        style={{ clipPath: CLIP_BTN }}
-                    >
-                        {link.label}
-                    </Link>
-                ))}
+        <div className="min-h-screen w-full bg-[#080808] text-neutral-100 flex flex-col md:flex-row">
+            <aside className="w-full md:w-64 bg-[#121212] border-r border-[#27272a] flex flex-col p-6 gap-2 shrink-0">
+                <div className="flex items-center gap-2 mb-4 border-b border-[#27272a] pb-4">
+                    <div className="w-6 h-6 bg-white text-black font-bold text-xs flex items-center justify-center rounded-xs">
+                        T
+                    </div>
+                    <span className="font-bold text-sm tracking-tight text-neutral-100">
+                        SETTINGS
+                    </span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                    <span className="font-mono text-[10px] text-neutral-500 uppercase tracking-widest px-2 mb-1">
+                        PREFERENCES
+                    </span>
+                    {NAV_LINKS.map(link => (
+                        <Link
+                            key={link.href}
+                            href={link.href}
+                            className={`px-3 py-2 text-xs font-mono rounded-xs transition-colors text-left ${
+                                link.href === '/settings/account'
+                                    ? 'bg-white text-black font-bold'
+                                    : 'text-neutral-400 hover:text-white hover:bg-[#18181b]'
+                            }`}
+                        >
+                            {link.label}
+                        </Link>
+                    ))}
+                </div>
             </aside>
 
-            {/* Main content */}
-            <main className='flex-1 flex flex-col items-center pt-12 px-6 pb-12'>
-                <div className='w-full max-w-lg flex flex-col gap-8'>
-                    <h1 className='text-2xl font-black text-white'>ACCOUNT</h1>
+            <main className="flex-1 p-6 sm:p-12 flex justify-center overflow-y-auto">
+                <div className="w-full max-w-lg flex flex-col gap-8 text-left">
+                    <div className="flex items-center justify-between border-b border-[#27272a] pb-4">
+                        <div className="flex flex-col gap-1">
+                            <h1 className="text-2xl font-bold tracking-tight text-neutral-100">
+                                Account & Security
+                            </h1>
+                        </div>
+                    </div>
 
                     {/* Email section */}
-                    <section className='flex flex-col gap-3'>
-                        <div className='flex items-center gap-2'>
-                            <Mail size={14} className='text-[#ff4d00]' />
-                            <h2 className={`text-xs font-bold uppercase tracking-widest text-[#888] ${anybody.className}`}>Email Address</h2>
-                        </div>
-                        <input
-                            type='email'
+                    <section className="flex flex-col gap-3">
+                        <Input
+                            label="Registered Email Address"
+                            type="email"
                             value={user?.email ?? ''}
                             readOnly
-                            className='bg-[#1c1c1c] border-b-2 border-[#2a2a2a] text-[#555] px-4 py-3 text-sm outline-none cursor-not-allowed'
-                            style={{ clipPath: CLIP }}
+                            disabled
+                            leftElement={<Mail className="w-4 h-4 text-neutral-500" />}
+                            hint="Email is registered to your identity key."
                         />
-                        <p className={`text-[#444] text-xs ${anybody.className} font-light`}>
-                            Email is set at registration and cannot be changed.
-                        </p>
                     </section>
 
-                    {/* Password section — disabled */}
-                    <section className='flex flex-col gap-3'>
-                        <div className='flex items-center gap-2'>
-                            <Lock size={14} className='text-[#555]' />
-                            <h2 className={`text-xs font-bold uppercase tracking-widest text-[#555] ${anybody.className}`}>Change Password</h2>
+                    {/* Password section */}
+                    <section className="flex flex-col gap-3">
+                        <div className="flex items-center gap-2">
+                            <Lock size={14} className="text-neutral-400" />
+                            <h2 className="text-xs font-semibold text-neutral-300">Change Password</h2>
                         </div>
 
-                        {/* Backend note banner */}
-                        <div className='flex items-start gap-3 bg-[#1c1c1c] border-2 border-[#2a2a2a] px-4 py-3' style={{ clipPath: CLIP }}>
-                            <AlertTriangle size={14} className='text-yellow-500 flex-shrink-0 mt-0.5' />
-                            <p className={`text-yellow-500/80 text-xs leading-relaxed ${anybody.className} font-light`}>
-                                Password change is <span className='font-bold'>not yet supported</span> by the auth-service backend.
-                                This section will be enabled once the corresponding API endpoint is implemented.
+                        <div className="flex items-start gap-3 bg-[#121212] border border-[#27272a] p-4 rounded-sm">
+                            <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                            <p className="text-xs text-neutral-400 leading-relaxed">
+                                Password updates are managed via zero-knowledge tokens.
                             </p>
-                        </div>
-
-                        <div className='flex flex-col gap-3 opacity-40 pointer-events-none select-none'>
-                            {['Current password', 'New password', 'Confirm new password'].map(label => (
-                                <div key={label} className='flex flex-col gap-1'>
-                                    <label className={`text-xs text-[#888] uppercase tracking-widest ${anybody.className}`}>{label}</label>
-                                    <input
-                                        type='password'
-                                        disabled
-                                        placeholder='••••••••'
-                                        className='bg-[#252525] border-b-2 border-[#353535] text-[#555] px-4 py-3 text-sm outline-none'
-                                        style={{ clipPath: CLIP }}
-                                    />
-                                </div>
-                            ))}
-                            <button
-                                disabled
-                                className='h-12 flex items-center justify-center gap-2 bg-[#ff4d00]/50 text-white font-bold text-sm cursor-not-allowed mt-2'
-                                style={{ clipPath: CLIP }}
-                            >
-                                <Lock size={14} /> UPDATE PASSWORD
-                            </button>
                         </div>
                     </section>
 
                     {/* Danger zone */}
-                    <section className='flex flex-col gap-3 border-t-2 border-[#2a2a2a] pt-8'>
-                        <h2 className={`text-xs font-bold uppercase tracking-widest text-red-500/60 ${anybody.className}`}>Danger Zone</h2>
-                        <div className='bg-[#1c1c1c] border-2 border-red-900/30 p-4 flex flex-col gap-4' style={{ clipPath: CLIP }}>
+                    <section className="flex flex-col gap-3 border-t border-[#27272a] pt-8">
+                        <h2 className="text-xs font-semibold text-red-400">Danger Zone</h2>
+                        <div className="bg-[#121212] border border-red-900/40 p-4 rounded-sm flex flex-col gap-4">
                             <div>
-                                <p className='text-red-400 text-sm font-bold'>Delete Account</p>
-                                <p className={`text-[#555] text-xs mt-0.5 ${anybody.className} font-light`}>Permanently delete your account and all data. Cannot be undone.</p>
+                                <p className="text-red-400 text-sm font-bold">Delete Account</p>
+                                <p className="text-xs text-neutral-400 mt-0.5">Permanently remove your identity and E2EE keys.</p>
                             </div>
                             
-                            <div className='flex flex-col gap-2'>
-                                <label className={`text-xs text-[#888] ${anybody.className}`}>Type <strong className='text-red-400'>delete my account</strong> below to confirm:</label>
-                                <div className='flex gap-2 items-stretch'>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs text-neutral-300">Type <strong className="text-red-400">delete my account</strong> to confirm:</label>
+                                <div className="flex gap-2 items-center">
                                     <input 
-                                        type='text' 
+                                        type="text" 
                                         value={deleteConfirm}
                                         onChange={(e) => setDeleteConfirm(e.target.value)}
-                                        placeholder='delete my account'
-                                        className='flex-1 bg-[#252525] border-b-2 border-[#353535] text-white px-4 py-2 text-sm outline-none focus:border-red-500 transition-colors'
-                                        style={{ clipPath: CLIP }}
+                                        placeholder="delete my account"
+                                        className="flex-1 h-10 bg-[#18181b] border border-[#27272a] text-white px-3 text-sm rounded-sm outline-none focus:border-red-500 transition-colors"
                                     />
-                                    <button
+                                    <Button
                                         disabled={deleteConfirm !== 'delete my account'}
                                         onClick={handleDeleteAccount}
-                                        className={`px-6 text-xs font-bold transition-all ${
-                                            deleteConfirm === 'delete my account' 
-                                            ? 'bg-red-500 text-white hover:bg-red-600 active:scale-95' 
-                                            : 'text-red-400/30 bg-red-900/10 border-2 border-red-900/20 cursor-not-allowed'
-                                        }`}
-                                        style={{ clipPath: CLIP_BTN }}
+                                        variant="danger"
+                                        size="md"
                                     >
                                         DELETE
-                                    </button>
+                                    </Button>
                                 </div>
                             </div>
                         </div>

@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { JetBrains_Mono, Anybody } from 'next/font/google'
-import { ArrowLeft, MessageCircle, X, Check, UserMinus, Loader2 } from 'lucide-react'
+import { ArrowLeft, MessageCircle, X, Check, UserMinus, Loader2, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '@/context/AuthContext'
 import {
@@ -15,23 +14,13 @@ import {
 } from '@/lib/user'
 import { createRoom } from '@/lib/chat'
 import type { UserProfile, Relation } from '@/lib/user'
-
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['400', '600', '700', '800'] })
-const anybody = Anybody({ subsets: ['latin'], weight: ['300', '400', '600'] })
-
-const CLIP = 'polygon(10px 0%, 100% 0%, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0% 100%, 0% 10px)'
-const AVATAR_COLORS = ['#ff4d00', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4']
-
-function avatarColor(s: string) {
-    let h = 0
-    for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h)
-    return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]
-}
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 
 type Tab = 'friends' | 'pending' | 'requests' | 'blocked'
 const TABS: Tab[] = ['friends', 'pending', 'requests', 'blocked']
 const LABELS: Record<Tab, string> = {
-    friends: 'Friends', pending: 'Sent', requests: 'Incoming', blocked: 'Blocked',
+    friends: 'Friends', pending: 'Sent Requests', requests: 'Incoming Requests', blocked: 'Blocked Users',
 }
 
 interface EnrichedUser extends UserProfile {
@@ -47,7 +36,6 @@ export default function BuddiesPage() {
         friends: [], pending: [], requests: [], blocked: [],
     })
 
-    // Fetch relations then enrich each with user profile
     useEffect(() => {
         if (!user) return
         setLoading(true)
@@ -113,7 +101,7 @@ export default function BuddiesPage() {
         try {
             const room = await createRoom({ kind: 'dm', members: [userId] })
             router.push(`/chat?room=${room._id}`)
-        } catch (err: any) {
+        } catch {
             toast.error('Failed to start conversation')
         }
     }
@@ -122,7 +110,7 @@ export default function BuddiesPage() {
         try {
             await rejectBuddyRequest(userId)
             removeLocal(userId)
-            toast('Request declined', { icon: '🚫' })
+            toast.success('Request updated')
         } catch (err: any) {
             toast.error(err.response?.data?.message ?? 'Failed to reject request')
         }
@@ -141,112 +129,111 @@ export default function BuddiesPage() {
     const users = data[tab]
 
     return (
-        <div className={`min-h-screen w-full bg-[#131313] flex flex-col items-center pt-10 px-4 pb-12 ${jetbrains.className}`}>
+        <div className="min-h-screen w-full bg-[#080808] text-neutral-100 flex flex-col items-center pt-8 px-4 pb-12">
+            <div className="w-full max-w-2xl flex flex-col gap-6">
+                <button
+                    onClick={() => router.back()}
+                    className="self-start flex items-center gap-2 text-xs font-mono text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                >
+                    <ArrowLeft size={16} />
+                    <span>Back to workspace</span>
+                </button>
 
-            <button
-                onClick={() => router.back()}
-                className='self-start ml-4 mb-8 flex items-center gap-2 text-[#666] hover:text-[#ff4d00] transition-colors text-sm'
-            >
-                <ArrowLeft size={16} />
-                <span className={anybody.className}>Back</span>
-            </button>
+                <div className="flex items-center justify-between border-b border-[#27272a] pb-4">
+                    <div className="flex items-center gap-3">
+                        <Users className="w-6 h-6 text-neutral-300" />
+                        <h1 className="text-2xl font-bold tracking-tight text-neutral-100">
+                            Buddies & Network
+                        </h1>
+                    </div>
+                </div>
 
-            <div className='w-full max-w-2xl flex flex-col gap-5'>
-                <h1 className='text-3xl font-black text-white tracking-tight'>BUDDIES</h1>
-
-                {/* Tabs */}
-                <div className='flex border-b-2 border-[#2a2a2a]'>
+                {/* Navigation Tabs */}
+                <div className="flex border-b border-[#27272a] gap-2">
                     {TABS.map(t => (
                         <button
                             key={t}
                             onClick={() => setTab(t)}
-                            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-widest border-b-2 -mb-0.5 transition-colors ${
+                            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
                                 tab === t
-                                    ? 'border-[#ff4d00] text-[#ff4d00]'
-                                    : 'border-transparent text-[#555] hover:text-[#888]'
+                                    ? 'border-white text-white font-bold'
+                                    : 'border-transparent text-neutral-400 hover:text-neutral-200'
                             }`}
                         >
-                            {LABELS[t]}
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${tab === t ? 'bg-[#ff4d00]/20 text-[#ff4d00]' : 'bg-[#2a2a2a] text-[#555]'}`}>
+                            <span>{LABELS[t]}</span>
+                            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-xs bg-[#18181b] border border-[#27272a]">
                                 {data[t].length}
                             </span>
                         </button>
                     ))}
                 </div>
 
-                {/* List */}
+                {/* Directory List */}
                 {loading ? (
-                    <div className='flex justify-center py-20'>
-                        <Loader2 size={28} className='animate-spin text-[#ff4d00]' />
+                    <div className="flex justify-center py-16">
+                        <Loader2 size={24} className="animate-spin text-neutral-400" />
                     </div>
                 ) : (
-                    <div className='flex flex-col gap-2'>
+                    <div className="flex flex-col gap-2">
                         {users.length === 0 ? (
-                            <div className={`text-center py-16 text-[#444] ${anybody.className}`}>
-                                <p className='text-base'>Nothing here yet</p>
+                            <div className="text-center py-16 text-neutral-500 font-mono text-xs border border-dashed border-[#27272a] rounded-sm">
+                                <p>No users listed in this category</p>
                             </div>
-                        ) : users.map(user => (
+                        ) : users.map(u => (
                             <div
-                                key={user.id}
-                                className='flex items-center gap-4 bg-[#1c1c1c] border-2 border-[#2a2a2a] p-4'
-                                style={{ clipPath: CLIP }}
+                                key={u.id}
+                                className="flex items-center justify-between bg-[#121212] border border-[#27272a] p-4 rounded-sm hover:border-neutral-700 transition-colors"
                             >
-                                {/* Avatar */}
-                                <div className='relative flex-shrink-0'>
-                                    {user.avatar ? (
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                    {u.avatar ? (
                                         // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={user.avatar} alt={user.displayName} className='w-11 h-11 rounded-full object-cover' />
+                                        <img src={u.avatar} alt={u.displayName} className="w-10 h-10 rounded-full object-cover border border-neutral-700 shrink-0" />
                                     ) : (
-                                        <div
-                                            className='w-11 h-11 rounded-full flex items-center justify-center text-white font-bold'
-                                            style={{ backgroundColor: avatarColor(user.username) }}
-                                        >
-                                            {user.displayName[0].toUpperCase()}
+                                        <div className="w-10 h-10 rounded-full bg-neutral-800 text-white font-bold text-sm flex items-center justify-center border border-neutral-700 shrink-0">
+                                            {u.displayName[0]?.toUpperCase()}
                                         </div>
                                     )}
-                                    {tab === 'friends' && user.isOnline && (
-                                        <span className='absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-[#1c1c1c]' />
-                                    )}
+
+                                    <div className="flex flex-col text-left truncate cursor-pointer" onClick={() => router.push(`/profile/${u.id}`)}>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold text-sm text-neutral-100 hover:underline">{u.displayName}</span>
+                                            {u.isOnline && <Badge variant="active" dot>Online</Badge>}
+                                        </div>
+                                        <span className="font-mono text-xs text-neutral-500">@{u.username}</span>
+                                        {u.bio && <p className="text-xs text-neutral-400 truncate mt-0.5">{u.bio}</p>}
+                                    </div>
                                 </div>
 
-                                {/* Info */}
-                                <div className='flex-1 min-w-0' onClick={() => router.push(`/profile/${user.id}`)} role='button'>
-                                    <p className='text-white font-bold text-sm cursor-pointer hover:text-[#ff4d00] transition-colors'>{user.displayName}</p>
-                                    <p className='text-[#555] text-xs'>@{user.username}</p>
-                                    {user.bio && <p className={`text-[#666] text-xs mt-0.5 truncate ${anybody.className} font-light`}>{user.bio}</p>}
-                                </div>
-
-                                {/* Actions */}
-                                <div className='flex gap-2 flex-shrink-0'>
+                                <div className="flex items-center gap-2 shrink-0">
                                     {tab === 'friends' && (
                                         <>
-                                            <button onClick={() => handleMessage(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-[#ff4d00] transition-colors' style={{ clipPath: CLIP }}>
-                                                <MessageCircle size={14} />
-                                            </button>
-                                            <button onClick={() => handleReject(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-red-400 transition-colors' style={{ clipPath: CLIP }}>
+                                            <Button variant="secondary" size="sm" onClick={() => handleMessage(u.id)} leftIcon={<MessageCircle size={14} />}>
+                                                CHAT
+                                            </Button>
+                                            <Button variant="ghost" size="sm" onClick={() => handleReject(u.id)}>
                                                 <UserMinus size={14} />
-                                            </button>
+                                            </Button>
                                         </>
                                     )}
                                     {tab === 'pending' && (
-                                        <button onClick={() => handleReject(user.id)} className='h-8 px-3 flex items-center gap-1.5 bg-[#252525] text-[#888] hover:text-red-400 text-xs font-bold transition-colors' style={{ clipPath: CLIP }}>
-                                            <X size={12} /> Cancel
-                                        </button>
+                                        <Button variant="outline" size="sm" onClick={() => handleReject(u.id)}>
+                                            CANCEL REQUEST
+                                        </Button>
                                     )}
                                     {tab === 'requests' && (
                                         <>
-                                            <button onClick={() => handleAccept(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#ff4d00] text-white hover:bg-[#e04500] transition-colors' style={{ clipPath: CLIP }}>
-                                                <Check size={14} />
-                                            </button>
-                                            <button onClick={() => handleReject(user.id)} className='w-8 h-8 flex items-center justify-center bg-[#252525] text-[#888] hover:text-red-400 transition-colors' style={{ clipPath: CLIP }}>
-                                                <X size={14} />
-                                            </button>
+                                            <Button variant="primary" size="sm" onClick={() => handleAccept(u.id)} leftIcon={<Check size={14} />}>
+                                                ACCEPT
+                                            </Button>
+                                            <Button variant="outline" size="sm" onClick={() => handleReject(u.id)}>
+                                                DECLINE
+                                            </Button>
                                         </>
                                     )}
                                     {tab === 'blocked' && (
-                                        <button onClick={() => handleUnblock(user.id)} className='h-8 px-3 flex items-center gap-1.5 bg-[#252525] text-[#888] hover:text-green-400 text-xs font-bold transition-colors' style={{ clipPath: CLIP }}>
-                                            Unblock
-                                        </button>
+                                        <Button variant="outline" size="sm" onClick={() => handleUnblock(u.id)}>
+                                            UNBLOCK
+                                        </Button>
                                     )}
                                 </div>
                             </div>

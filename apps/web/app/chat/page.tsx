@@ -1,11 +1,10 @@
 'use client'
 
-import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, Pause, Square, FileText, Reply, X, Mic, Forward, CircleStop } from 'lucide-react'
+import { Send, SquarePen, Check, CheckCheck, Search, Users, Settings, UserCircle, MessageSquare, Loader2, Smile, Paperclip, ArrowLeft, Play, Pause, Square, FileText, Reply, X, Mic, Forward, CircleStop, ShieldCheck, BarChart2, Download, Camera } from 'lucide-react'
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { motion, AnimatePresence } from 'framer-motion'
-import { JetBrains_Mono, Anybody } from 'next/font/google'
+import { motion, AnimatePresence } from 'motion/react'
 import toast from 'react-hot-toast'
 import EmojiPicker, { Theme, EmojiClickData } from 'emoji-picker-react'
 import { useAuth } from '@/context/AuthContext'
@@ -20,15 +19,10 @@ import { secureStore } from '@/lib/storage/secureStore'
 import type { Room, ChatMessage } from '@/lib/chat'
 import type { UserProfile } from '@/lib/user'
 import { VideoCallOverlay } from '@/components/VideoCallOverlay'
-
-// ─── Clip path constants ──────────────────────────────────────────────────────
-const CLIP_SENT = 'polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%)'
-const CLIP_RECEIVED = 'polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px)'
-const CLIP_INPUT = 'polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%)'
-const CLIP_BTN = 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)'
-
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
-const anybody = Anybody({ subsets: ['latin'], weight: ['100', '200', '300', '400', '500', '600', '700', '800'] })
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
 
 export const TALKIE_BOT_PROFILE: UserProfile = {
     id: '00000000-0000-0000-0000-000000000001',
@@ -65,7 +59,6 @@ function groupByDate(messages: ChatMessage[]): { date: string; msgs: ChatMessage
     return groups
 }
 
-// Last message preview from a room
 function lastMessage(room: Room): string {
     if (room.lastMessageRecord) {
         return room.lastMessageRecord.content;
@@ -73,13 +66,12 @@ function lastMessage(room: Room): string {
     return room.name ?? `${room.members.length} members`
 }
 
-// Check if a message is an audio message (by parsing decrypted content)
 function isAudioMessage(msg: ChatMessage): { type: 'audio'; blobKey: string; blobNonce: string; durationMs: number } | null {
     if (!msg.content || !msg.attachments?.length) return null;
     try {
         const parsed = JSON.parse(msg.content);
         if (parsed.type === 'audio') return parsed;
-    } catch { /* not JSON — normal text message */ }
+    } catch { /* normal text */ }
     return null;
 }
 
@@ -88,11 +80,35 @@ function isPollMessage(msg: ChatMessage): { type: 'poll'; question: string; opti
     try {
         const parsed = JSON.parse(msg.content);
         if (parsed.type === 'poll') return parsed;
-    } catch { /* normal text message */ }
+    } catch { /* normal text */ }
     return null;
 }
 
-// Format ms to MM:SS
+function isSpoilerMessage(msg: ChatMessage): { type: 'spoiler'; text: string } | null {
+    if (!msg.content) return null;
+    try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed.type === 'spoiler') return parsed;
+    } catch { /* normal text */ }
+    return null;
+}
+
+const SpoilerText = ({ text }: { text: string }) => {
+    const [revealed, setRevealed] = useState(false);
+    return (
+        <span
+            onClick={() => setRevealed(v => !v)}
+            className={`inline-block px-1.5 py-0.5 rounded-xs transition-all cursor-pointer select-none ${revealed
+                    ? 'bg-[#27272a] text-neutral-100'
+                    : 'bg-[#27272a] text-transparent blur-xs hover:bg-[#3f3f46]'
+                }`}
+            title={revealed ? "Click to hide spoiler" : "Click to reveal spoiler"}
+        >
+            {text}
+        </span>
+    );
+};
+
 function formatDuration(ms: number): string {
     const totalSec = Math.round(ms / 1000);
     const m = Math.floor(totalSec / 60);
@@ -103,6 +119,11 @@ function formatDuration(ms: number): string {
 const COMMANDS = [
     { command: '@TalkieBot', description: 'Ask TalkieBot AI assistant anything', usage: '@TalkieBot <your question>' },
     { command: '/help', description: 'List available commands', usage: '/help' },
+    { command: '/choose', description: 'Pick randomly from options (a, b, c)', usage: '/choose Option 1, Option 2, Option 3' },
+    { command: '/topic', description: 'Get a fun conversation starter prompt', usage: '/topic' },
+    { command: '/spoiler', description: 'Hide secret text behind a blur mask', usage: '/spoiler <secret text>' },
+    { command: '/quote', description: 'Send a memorable quote', usage: '/quote' },
+    { command: '/timer', description: 'Start a countdown timer (seconds)', usage: '/timer <seconds>' },
     { command: '/roll', description: 'Roll a die', usage: '/roll' },
     { command: '/flip', description: 'Flip a coin', usage: '/flip' },
     { command: '/8ball', description: 'Ask the magic 8-ball', usage: '/8ball <question>' },
@@ -121,17 +142,16 @@ const COMMANDS = [
     { command: '/deny', description: 'Deny a request (<id>)', usage: '/deny <request_id>' },
 ];
 
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── DateSeparator ─────────────────────────────────────────────────────────────
 const DateSeparator = ({ label }: { label: string }) => (
-    <div className='flex items-center gap-3 my-3 px-2'>
-        <div className='flex-1 h-px bg-[#2e2e2e]' />
-        <span className='text-[10px] text-[#555] uppercase tracking-widest whitespace-nowrap'>{label}</span>
-        <div className='flex-1 h-px bg-[#2e2e2e]' />
+    <div className="flex items-center gap-3 my-4 px-4 font-mono text-xs text-neutral-500">
+        <div className="flex-1 h-px bg-[#27272a]" />
+        <span>{label}</span>
+        <div className="flex-1 h-px bg-[#27272a]" />
     </div>
 )
 
-// ─── AudioPlayback (inline in bubble) ─────────────────────────────────────────
+// ─── AudioPlayback Component ──────────────────────────────────────────────────
 const AudioPlayback = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) => {
     const audioMeta = isAudioMessage(msg);
     const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle');
@@ -152,10 +172,8 @@ const AudioPlayback = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) =
         if (!audioMeta || !msg.attachments?.[0]) return;
         setState('loading');
         try {
-            // Fetch the encrypted blob from the file service
             const res = await fetch(msg.attachments[0].url);
             const encryptedBytes = new Uint8Array(await res.arrayBuffer());
-            // Decrypt client-side
             const decryptedBytes = await decryptBlob(encryptedBytes, audioMeta.blobKey, audioMeta.blobNonce);
             const blob = new Blob([decryptedBytes as unknown as BlobPart], { type: 'audio/webm' });
             const url = URL.createObjectURL(blob);
@@ -212,51 +230,50 @@ const AudioPlayback = ({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) =
         }
     };
 
-    // Generate fixed pseudo-waveform bars
-    const bars = Array.from({ length: 28 }, (_, i) => {
-        const h = 12 + Math.sin(i * 0.7) * 10 + Math.cos(i * 1.3) * 6;
-        return Math.max(4, Math.min(28, h));
+    const bars = Array.from({ length: 24 }, (_, i) => {
+        const h = 10 + Math.sin(i * 0.7) * 8 + Math.cos(i * 1.3) * 5;
+        return Math.max(4, Math.min(24, h));
     });
 
     return (
-        <div className="flex items-center gap-3 min-w-[220px]">
+        <div className="flex items-center gap-3 min-w-[200px]">
             <button
                 onClick={state === 'idle' ? loadAndPlay : togglePlayPause}
                 disabled={state === 'loading'}
-                className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${isMine
-                        ? 'bg-white/20 hover:bg-white/30 text-white'
-                        : 'bg-[#ff4d00]/20 hover:bg-[#ff4d00]/30 text-[#ff4d00]'
-                    } ${state === 'loading' ? 'animate-pulse' : ''}`}
+                className={`w-8 h-8 rounded-xs flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer ${isMine
+                        ? 'bg-white text-black hover:bg-neutral-200'
+                        : 'bg-[#27272a] text-white hover:bg-neutral-700'
+                    }`}
             >
                 {state === 'loading' ? (
-                    <Loader2 size={18} className="animate-spin" />
+                    <Loader2 size={14} className="animate-spin" />
                 ) : state === 'playing' ? (
-                    <Pause size={16} fill="currentColor" />
+                    <Pause size={14} fill="currentColor" />
                 ) : (
-                    <Play size={16} fill="currentColor" />
+                    <Play size={14} fill="currentColor" />
                 )}
             </button>
             <div className="flex-1 flex flex-col gap-1">
-                <div className="flex items-end gap-[2px] h-7">
+                <div className="flex items-end gap-[2px] h-6">
                     {bars.map((h, i) => {
                         const barProgress = i / bars.length;
                         const isActive = barProgress <= progress;
                         return (
                             <div
                                 key={i}
-                                className="rounded-full transition-all duration-100"
+                                className="transition-all duration-100 rounded-xs"
                                 style={{
                                     width: '3px',
                                     height: `${h}px`,
                                     backgroundColor: isActive
-                                        ? (isMine ? 'rgba(255,255,255,0.9)' : '#ff4d00')
-                                        : (isMine ? 'rgba(255,255,255,0.3)' : '#555'),
+                                        ? (isMine ? '#ffffff' : '#f4f4f5')
+                                        : (isMine ? 'rgba(255,255,255,0.25)' : '#3f3f46'),
                                 }}
                             />
                         );
                     })}
                 </div>
-                <span className={`text-[10px] ${isMine ? 'text-white/60' : 'text-[#888]'}`}>
+                <span className={`text-[10px] font-mono ${isMine ? 'text-neutral-400' : 'text-neutral-500'}`}>
                     {duration > 0 ? formatDuration(duration) : '0:00'}
                 </span>
             </div>
@@ -295,7 +312,6 @@ const AudioRecorderModal = ({
             }
             mediaRecRef.current?.stream?.getTracks().forEach(t => t.stop());
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const startTimer = () => {
@@ -332,7 +348,7 @@ const AudioRecorderModal = ({
             };
 
             mediaRecRef.current = mr;
-            mr.start(250); // collect data every 250ms
+            mr.start(250);
             setRecState('recording');
             pausedElapsedRef.current = 0;
             setElapsed(0);
@@ -357,7 +373,6 @@ const AudioRecorderModal = ({
     const stopRecording = () => {
         mediaRecRef.current?.stop();
         stopTimer();
-        // Stop mic tracks
         mediaRecRef.current?.stream?.getTracks().forEach(t => t.stop());
         setRecState('stopped');
     };
@@ -373,9 +388,7 @@ const AudioRecorderModal = ({
 
     const playPreview = () => {
         if (!previewUrl) return;
-        if (previewAudioRef.current) {
-            previewAudioRef.current.pause();
-        }
+        if (previewAudioRef.current) previewAudioRef.current.pause();
         const audio = new Audio(previewUrl);
         previewAudioRef.current = audio;
         audio.onended = () => setIsPlaying(false);
@@ -394,167 +407,84 @@ const AudioRecorderModal = ({
         onSend(finalBlobRef.current, elapsed);
     };
 
-    // Generate animated waveform bars for recording state
-    const waveBars = Array.from({ length: 40 }, (_, i) => i);
+    const waveBars = Array.from({ length: 36 }, (_, i) => i);
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-            <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className={`w-full max-w-md bg-[#1c1c1c] border-2 border-[#353535] p-8 flex flex-col items-center gap-6 shadow-2xl ${jetbrains.className}`}
-                style={{ clipPath: 'polygon(20px 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%, 0 20px)' }}
-            >
-                {/* Header */}
-                <div className="flex items-center justify-between w-full">
-                    <h3 className={`text-lg font-black text-white uppercase tracking-wider ${anybody.className}`}>
-                        Voice Message
-                    </h3>
-                    <button onClick={cancelRecording} className="text-[#888] hover:text-white transition-colors p-1">
-                        <X size={20} />
-                    </button>
-                </div>
-
-                {/* Timer display */}
-                <div className="text-4xl font-bold text-white tracking-widest tabular-nums">
+        <Modal isOpen={true} onClose={cancelRecording} title="Record Voice Message" maxWidth="sm">
+            <div className="flex flex-col items-center gap-5 text-center py-2">
+                <div className="text-3xl font-mono font-bold text-white tracking-widest tabular-nums">
                     {formatDuration(elapsed)}
                 </div>
 
-                {/* Waveform visualization */}
-                <div className="flex items-center gap-[2px] h-16 w-full justify-center">
+                <div className="flex items-center gap-[3px] h-12 w-full justify-center">
                     {recState === 'recording' ? (
                         waveBars.map(i => (
                             <div
                                 key={i}
-                                className="w-[3px] rounded-full bg-[#ff4d00]"
+                                className="w-[3px] bg-white rounded-xs"
                                 style={{
                                     animation: `audioWave 0.8s ${i * 0.04}s ease-in-out infinite alternate`,
-                                    height: '8px',
+                                    height: '6px',
                                 }}
                             />
                         ))
-                    ) : recState === 'paused' ? (
-                        waveBars.map(i => (
-                            <div
-                                key={i}
-                                className="w-[3px] rounded-full bg-[#ff4d00]/40"
-                                style={{ height: `${8 + Math.sin(i * 0.5) * 12}px` }}
-                            />
-                        ))
-                    ) : recState === 'stopped' ? (
-                        waveBars.map(i => (
-                            <div
-                                key={i}
-                                className="w-[3px] rounded-full bg-[#ff4d00]/70"
-                                style={{ height: `${8 + Math.sin(i * 0.7) * 16 + Math.cos(i * 1.3) * 8}px` }}
-                            />
-                        ))
                     ) : (
-                        <div className="flex items-center gap-2 text-[#555]">
-                            <Mic size={24} />
-                            <span className={`text-sm ${anybody.className}`}>Tap to start</span>
-                        </div>
+                        waveBars.map(i => (
+                            <div
+                                key={i}
+                                className="w-[3px] bg-neutral-700 rounded-xs"
+                                style={{ height: `${6 + Math.sin(i * 0.5) * 10}px` }}
+                            />
+                        ))
                     )}
                 </div>
 
-                {/* Action buttons */}
-                <div className="flex items-center gap-4 mt-2">
+                <div className="flex items-center gap-3 mt-2">
                     {recState === 'idle' && (
-                        <motion.button
-                            whileTap={{ scale: 0.9 }}
-                            onClick={startRecording}
-                            className="w-20 h-20 rounded-full bg-[#ff4d00] flex items-center justify-center text-white shadow-lg shadow-[#ff4d00]/30 hover:bg-[#e04500] transition-colors"
-                        >
-                            <Mic size={36} />
-                        </motion.button>
+                        <Button variant="primary" size="lg" onClick={startRecording} leftIcon={<Mic className="w-4 h-4" />}>
+                            START RECORDING
+                        </Button>
                     )}
 
                     {recState === 'recording' && (
                         <>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={pauseRecording}
-                                className="w-16 h-16 rounded-full bg-[#353535] flex items-center justify-center text-white hover:bg-[#454545] transition-colors border-2 border-[#555]"
-                            >
-                                <Pause size={28} />
-                            </motion.button>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={stopRecording}
-                                className="w-16 h-16 rounded-full bg-[#ff4d00] flex items-center justify-center text-white hover:bg-[#e04500] transition-colors shadow-lg shadow-[#ff4d00]/30"
-                            >
-                                <CircleStop size={28} />
-                            </motion.button>
+                            <Button variant="secondary" size="md" onClick={pauseRecording} leftIcon={<Pause className="w-4 h-4" />}>
+                                PAUSE
+                            </Button>
+                            <Button variant="primary" size="md" onClick={stopRecording} leftIcon={<Square className="w-4 h-4" />}>
+                                STOP
+                            </Button>
                         </>
                     )}
 
                     {recState === 'paused' && (
                         <>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={resumeRecording}
-                                className="w-16 h-16 rounded-full bg-[#ff4d00] flex items-center justify-center text-white hover:bg-[#e04500] transition-colors shadow-lg shadow-[#ff4d00]/30"
-                            >
-                                <Mic size={28} />
-                            </motion.button>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={cancelRecording}
-                                className="w-16 h-16 rounded-full bg-[#353535] flex items-center justify-center text-red-400 hover:bg-red-500/20 transition-colors border-2 border-red-500/40"
-                            >
-                                <X size={28} />
-                            </motion.button>
+                            <Button variant="primary" size="md" onClick={resumeRecording} leftIcon={<Mic className="w-4 h-4" />}>
+                                RESUME
+                            </Button>
+                            <Button variant="ghost" size="md" onClick={cancelRecording}>
+                                DISCARD
+                            </Button>
                         </>
                     )}
 
                     {recState === 'stopped' && (
                         <>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={isPlaying ? stopPreview : playPreview}
-                                className="w-14 h-14 rounded-full bg-[#353535] flex items-center justify-center text-white hover:bg-[#454545] transition-colors border-2 border-[#555]"
-                            >
-                                {isPlaying ? <Square size={20} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
-                            </motion.button>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={cancelRecording}
-                                className="w-14 h-14 rounded-full bg-[#353535] flex items-center justify-center text-red-400 hover:bg-red-500/20 transition-colors border-2 border-red-500/40"
-                            >
-                                <X size={22} />
-                            </motion.button>
-                            <motion.button
-                                whileTap={{ scale: 0.9 }}
-                                onClick={handleSend}
-                                className="w-14 h-14 rounded-full bg-[#ff4d00] flex items-center justify-center text-white hover:bg-[#e04500] transition-colors shadow-lg shadow-[#ff4d00]/30"
-                            >
-                                <Send size={20} />
-                            </motion.button>
+                            <Button variant="secondary" size="md" onClick={isPlaying ? stopPreview : playPreview}>
+                                {isPlaying ? 'STOP PREVIEW' : 'PLAY PREVIEW'}
+                            </Button>
+                            <Button variant="primary" size="md" onClick={handleSend} rightIcon={<Send className="w-4 h-4" />}>
+                                SEND AUDIO
+                            </Button>
                         </>
                     )}
                 </div>
-
-                {/* Status text */}
-                <p className={`text-xs text-[#888] ${anybody.className}`}>
-                    {recState === 'idle' && 'Press the mic to start recording'}
-                    {recState === 'recording' && 'Recording...'}
-                    {recState === 'paused' && 'Recording paused'}
-                    {recState === 'stopped' && 'Review and send your voice message'}
-                </p>
-            </motion.div>
-
-            <style>{`
-                @keyframes audioWave {
-                    0% { height: 4px; }
-                    100% { height: 32px; }
-                }
-            `}</style>
-        </div>
+            </div>
+        </Modal>
     );
 };
 
-// ─── Forward Room Picker Modal ────────────────────────────────────────────────
+// ─── Forward Modal Component ──────────────────────────────────────────────────
 const ForwardModal = ({
     message,
     rooms,
@@ -584,41 +514,21 @@ const ForwardModal = ({
     });
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-            <motion.div
-                initial={{ opacity: 0, y: 50 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 50 }}
-                className={`w-full max-w-md bg-[#1c1c1c] border-2 border-[#353535] flex flex-col max-h-[80vh] shadow-2xl ${jetbrains.className}`}
-            >
-                <div className="flex items-center justify-between p-5 border-b-2 border-[#353535]">
-                    <h3 className={`text-lg font-black text-white uppercase tracking-wider ${anybody.className}`}>
-                        Forward To
-                    </h3>
-                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors p-1">
-                        <X size={20} />
-                    </button>
+        <Modal isOpen={true} onClose={onClose} title="Forward Message" maxWidth="md">
+            <div className="flex flex-col gap-4">
+                <Input
+                    placeholder="Search target conversation..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    leftElement={<Search className="w-4 h-4 text-neutral-500" />}
+                />
+
+                <div className="p-3 bg-[#161616] border border-[#27272a] rounded-sm text-xs">
+                    <span className="text-xs text-neutral-500 block mb-1">Message Preview</span>
+                    <p className="text-neutral-300 truncate">{message.content || '📎 Attachment'}</p>
                 </div>
 
-                <div className="px-4 py-3 border-b-2 border-[#353535]">
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        placeholder="Search conversations..."
-                        className="w-full bg-[#252525] text-white px-4 py-2.5 text-sm border-2 border-[#353535] focus:border-[#ff4d00] outline-none transition-colors rounded-none"
-                    />
-                </div>
-
-                {/* Forwarded message preview */}
-                <div className="px-4 py-3 bg-[#252525] border-b-2 border-[#353535]">
-                    <div className="border-l-4 border-[#ff4d00] pl-3">
-                        <p className="text-[10px] text-[#ff4d00] font-bold uppercase tracking-wider mb-1">Forwarding message</p>
-                        <p className="text-xs text-[#aaa] truncate">{message.content || '📎 Attachment'}</p>
-                    </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
+                <div className="max-h-60 overflow-y-auto flex flex-col gap-1 border border-[#27272a] p-1 rounded-sm">
                     {filteredRooms.map(room => {
                         const otherId = room.members.find(m => m.userId !== currentUserId)?.userId;
                         const otherProfile = otherId ? profiles[otherId] : null;
@@ -631,32 +541,33 @@ const ForwardModal = ({
                             <div
                                 key={room._id}
                                 onClick={() => onForward(room)}
-                                className="flex items-center gap-3 p-4 cursor-pointer hover:bg-[#ff4d00]/10 border-b border-[#252525] transition-colors"
+                                className="flex items-center justify-between p-2.5 hover:bg-[#18181b] cursor-pointer transition-colors border-b border-[#27272a] last:border-0 rounded-xs"
                             >
-                                {avatar ? (
-                                    <img src={avatar} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-                                ) : (
-                                    <div className="w-10 h-10 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                                        {name[0]?.toUpperCase()}
+                                <div className="flex items-center gap-3">
+                                    {avatar ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={avatar} alt={name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                                    ) : (
+                                        <div className="w-8 h-8 bg-neutral-800 text-white font-mono text-xs flex items-center justify-center rounded-full shrink-0 font-bold">
+                                            {name[0]?.toUpperCase()}
+                                        </div>
+                                    )}
+                                    <div className="flex flex-col text-left">
+                                        <span className="text-sm font-semibold text-neutral-200">{name}</span>
+                                        <span className="text-xs text-neutral-500">{room.kind === 'dm' ? 'Direct Message' : `${room.members.length} members`}</span>
                                     </div>
-                                )}
-                                <div className="flex-1 overflow-hidden">
-                                    <p className="text-sm font-bold text-white truncate">{name}</p>
-                                    <p className="text-[10px] text-[#666] uppercase tracking-wider">{room.kind === 'dm' ? 'Direct Message' : `${room.members.length} members`}</p>
                                 </div>
-                                <Forward size={16} className="text-[#555] flex-shrink-0" />
+                                <Forward className="w-4 h-4 text-neutral-500" />
                             </div>
                         );
                     })}
-                    {filteredRooms.length === 0 && (
-                        <p className={`text-center text-[#555] py-10 text-sm ${anybody.className}`}>No conversations found</p>
-                    )}
                 </div>
-            </motion.div>
-        </div>
+            </div>
+        </Modal>
     );
 };
 
+// ─── MessageBubble Component ──────────────────────────────────────────────────
 const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTarget, replyTargetName, onReact, onReplyClick, onVotePoll }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onReply: () => void; onForward: () => void; replyTarget?: ChatMessage; replyTargetName?: string; onReact: (emoji: string | null) => void; onReplyClick?: (msgId: string) => void; onVotePoll: (msgId: string, optionId: string) => void }) => {
     const [showReactions, setShowReactions] = useState(false);
     const reactionsRef = useRef<HTMLDivElement>(null);
@@ -681,23 +592,24 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
     }, [showReactions]);
 
     return (
-        <div id={`message-${msg._id}`} className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4 py-1 group transition-colors duration-500`}>
-            <div className={`flex flex-col gap-1 max-w-[65%] relative ${isMine ? 'items-end' : 'items-start'}`}>
-                <div className={`absolute top-2 ${isMine ? '-left-24' : '-right-24'} opacity-0 group-hover:opacity-100 ${showReactions ? 'opacity-100' : ''} transition-opacity z-10 flex gap-1 bg-[#252525] p-1 rounded-full shadow-lg border border-[#353535]`}>
-                    <button onClick={onReply} className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="Reply">
-                        <Reply size={14} />
+        <div id={`message-${msg._id}`} className={`flex w-full ${isMine ? 'justify-end' : 'justify-start'} px-4 py-1 group`}>
+            <div className={`flex flex-col gap-1 max-w-[70%] sm:max-w-[60%] relative ${isMine ? 'items-end' : 'items-start'}`}>
+                {/* Floating Quick Action Overlay */}
+                <div className={`absolute top-1 ${isMine ? '-left-20' : '-right-20'} opacity-0 group-hover:opacity-100 ${showReactions ? 'opacity-100' : ''} transition-opacity z-10 flex gap-1 bg-[#161616] p-1 border border-[#27272a] rounded-sm shadow-xl`}>
+                    <button onClick={onReply} className="p-1 text-neutral-400 hover:text-white transition-colors cursor-pointer" title="Reply">
+                        <Reply size={13} />
                     </button>
-                    <button onClick={onForward} className="p-1.5 text-[#888] hover:text-white rounded-full hover:bg-[#ff4d00]" title="Forward">
-                        <Forward size={14} />
+                    <button onClick={onForward} className="p-1 text-neutral-400 hover:text-white transition-colors cursor-pointer" title="Forward">
+                        <Forward size={13} />
                     </button>
-                    <div className="flex gap-1 relative" ref={reactionsRef}>
-                        <button onClick={() => setShowReactions(!showReactions)} className={`p-1.5 rounded-full hover:bg-[#ff4d00] ${showReactions ? 'text-white bg-[#ff4d00]' : 'text-[#888] hover:text-white'}`} title="React">
-                            <Smile size={14} />
+                    <div className="relative" ref={reactionsRef}>
+                        <button onClick={() => setShowReactions(!showReactions)} className="p-1 text-neutral-400 hover:text-white transition-colors cursor-pointer" title="React">
+                            <Smile size={13} />
                         </button>
                         {showReactions && (
-                            <div className="flex absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-[#252525] p-1.5 rounded-full shadow-xl border border-[#353535] gap-1.5 z-[100]">
+                            <div className="flex absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-[#121212] border border-[#27272a] p-1 rounded-sm shadow-2xl gap-1 z-50">
                                 {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
-                                    <button key={emoji} onClick={() => { onReact(myReaction === emoji ? null : emoji); setShowReactions(false); }} className="hover:scale-125 transition-transform text-lg px-1.5">
+                                    <button key={emoji} onClick={() => { onReact(myReaction === emoji ? null : emoji); setShowReactions(false); }} className="hover:scale-110 text-base p-1 cursor-pointer">
                                         {emoji}
                                     </button>
                                 ))}
@@ -705,45 +617,43 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                         )}
                     </div>
                 </div>
+
                 {msg.isDeleted ? (
-                    <div
-                        style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
-                        className='px-4 py-3 text-sm italic text-[#555] bg-[#1e1e1e]'
-                    >
+                    <div className="px-3.5 py-2 text-xs italic text-neutral-500 bg-[#121212] border border-[#27272a] rounded-sm">
                         Message deleted
                     </div>
                 ) : (
                     <div
-                        style={{ clipPath: isMine ? CLIP_SENT : CLIP_RECEIVED }}
-                        className={`px-4 py-3 text-sm leading-relaxed flex flex-col gap-2 ${isMine ? 'bg-[#ff4d00] text-white' : 'bg-[#2a2a2a] text-[#e0e0e0]'}`}
+                        className={`px-4 py-3 text-sm flex flex-col gap-2 rounded-sm border ${isMine
+                                ? 'bg-[#1a1a1a] text-neutral-100 border-[#3f3f46]'
+                                : 'bg-[#121212] text-neutral-200 border-[#27272a]'
+                            }`}
                     >
                         {msg.forwardedFrom && (
-                            <div className={`flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold mb-1 ${isMine ? 'text-white/70' : 'text-[#ff4d00]/80'}`}>
-                                <Forward size={10} />
+                            <div className="flex items-center gap-1 text-xs text-neutral-500 font-medium">
+                                <Forward size={12} />
                                 <span>Forwarded</span>
                             </div>
                         )}
                         {replyTarget && (
                             <div
                                 onClick={() => onReplyClick && onReplyClick(replyTarget._id)}
-                                className={`flex flex-col border-l-4 pl-3 py-1 mb-2 rounded-r cursor-pointer transition-colors ${isMine
-                                        ? 'border-white/70 bg-black/20 hover:bg-black/30'
-                                        : 'border-[#ff4d00] bg-black/20 hover:bg-black/30'
-                                    }`}
+                                className="flex flex-col border-l-2 border-white/40 pl-2 py-0.5 mb-1 cursor-pointer hover:border-white transition-colors bg-black/20"
                             >
-                                <span className={`font-bold text-xs mb-0.5 ${isMine ? 'text-white/90' : 'text-[#ff4d00]'}`}>
+                                <span className="text-xs text-neutral-400 font-medium">
                                     Replying to {replyTargetName || 'someone'}
                                 </span>
-                                <span className={`text-xs truncate w-full ${isMine ? 'text-white/80' : 'text-[#aaa]'}`}>
+                                <span className="text-xs text-neutral-300 truncate">
                                     {replyTarget.content || 'Attachment'}
                                 </span>
                             </div>
                         )}
+
                         {isPollMessage(msg) ? (() => {
                             const pollMeta = isPollMessage(msg)!;
                             return (
                                 <div className="flex flex-col gap-2 min-w-[200px]">
-                                    <span className="font-black text-lg">📊 {pollMeta.question}</span>
+                                    <span className="font-semibold text-sm flex items-center gap-1.5"><BarChart2 className="w-4 h-4 text-white shrink-0" /> {pollMeta.question}</span>
                                     {pollMeta.options.map(opt => {
                                         const votesForOption = Object.values(msg.pollVotes || {}).filter(v => v === opt.id).length;
                                         const totalVotes = Object.keys(msg.pollVotes || {}).length || 1;
@@ -754,17 +664,20 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                                             <button
                                                 key={opt.id}
                                                 onClick={() => onVotePoll(msg._id, opt.id)}
-                                                className={`relative overflow-hidden flex justify-between px-3 py-2 text-sm border transition-colors ${myVote === opt.id ? 'border-[#ff4d00]' : 'border-white/20'}`}
+                                                className={`relative overflow-hidden flex justify-between p-2 text-xs border rounded-sm transition-colors cursor-pointer ${myVote === opt.id ? 'border-white bg-white/10' : 'border-[#27272a] hover:border-neutral-500'
+                                                    }`}
                                             >
-                                                <div className="absolute left-0 top-0 bottom-0 bg-[#ff4d00]/30 transition-all" style={{ width: `${percent}%` }} />
-                                                <span className="relative z-10 font-bold">{opt.text}</span>
-                                                <span className="relative z-10 text-xs opacity-70">{votesForOption}</span>
+                                                <div className="absolute left-0 top-0 bottom-0 bg-white/10" style={{ width: `${percent}%` }} />
+                                                <span className="relative z-10 font-medium">{opt.text}</span>
+                                                <span className="relative z-10 text-xs text-neutral-400">{votesForOption}</span>
                                             </button>
                                         )
                                     })}
                                 </div>
                             )
-                        })() : isAudioMessage(msg) ? (
+                        })() : isSpoilerMessage(msg) ? (
+                            <SpoilerText text={isSpoilerMessage(msg)!.text} />
+                        ) : isAudioMessage(msg) ? (
                             <AudioPlayback msg={msg} isMine={isMine} />
                         ) : (
                             <>
@@ -772,28 +685,33 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                                     <div className="flex flex-col gap-2">
                                         {msg.attachments.map((att, i) => (
                                             att.contentType.startsWith('image/') ? (
-                                                <img key={i} src={att.url} alt="attachment" className="max-w-full rounded bg-black/20" />
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img key={i} src={att.url} alt="attachment" className="max-w-full rounded-sm border border-neutral-700 bg-black/40" />
                                             ) : (
-                                                <a key={i} href={att.url} target="_blank" rel="noreferrer" className="underline text-sm break-all font-bold">
-                                                    📄 Download File
+                                                <a key={i} href={att.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 underline text-xs text-neutral-200 hover:text-white">
+                                                    <Download size={13} />
+                                                    <span>Download File</span>
                                                 </a>
                                             )
                                         ))}
                                     </div>
                                 )}
-                                {msg.content && <span>{msg.content}</span>}
+                                {msg.content && <span className="leading-relaxed">{msg.content}</span>}
                             </>
                         )}
                     </div>
                 )}
 
                 {hasReactions && (
-                    <div className={`flex flex-wrap gap-1 mt-0.5 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`flex flex-wrap gap-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
                         {Object.entries(reactionCounts).map(([emoji, count]) => (
                             <button
                                 key={emoji}
                                 onClick={() => onReact(myReaction === emoji ? null : emoji)}
-                                className={`text-[11px] px-1.5 py-0.5 rounded-full flex items-center gap-1 border ${myReaction === emoji ? 'bg-[#ff4d00]/20 border-[#ff4d00]/50 text-[#ff4d00]' : 'bg-[#1c1c1c] border-[#353535] text-[#888] hover:bg-[#252525]'}`}
+                                className={`text-xs px-1.5 py-0.5 rounded-xs flex items-center gap-1 border ${myReaction === emoji
+                                        ? 'bg-white text-black border-white'
+                                        : 'bg-[#121212] text-neutral-400 border-[#27272a] hover:border-neutral-500'
+                                    }`}
                             >
                                 <span>{emoji}</span>
                                 {count > 1 && <span>{count}</span>}
@@ -802,14 +720,14 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
                     </div>
                 )}
 
-                <div className={`flex items-center gap-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
-                    <span className='text-[10px] text-[#555]'>{formatTime(new Date(msg.createdAt))}</span>
+                <div className={`flex items-center gap-1.5 font-mono text-[10px] text-neutral-500 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                    <span>{formatTime(new Date(msg.createdAt))}</span>
                     {isMine && (
                         msg.seenBy.length > 0
-                            ? <CheckCheck size={13} className='text-[#34b7f1]' />
+                            ? <CheckCheck size={12} className="text-white" />
                             : (msg.delivery?.deliveredAt
-                                ? <CheckCheck size={13} className='text-[#888]' />
-                                : <Check size={13} className='text-[#888]' />)
+                                ? <CheckCheck size={12} className="text-neutral-500" />
+                                : <Check size={12} className="text-neutral-500" />)
                     )}
                 </div>
             </div>
@@ -818,17 +736,20 @@ const MessageBubble = ({ msg, isMine, currentUserId, onReply, onForward, replyTa
 }
 
 const TypingIndicator = () => (
-    <div className='flex justify-start px-4'>
-        <div style={{ clipPath: CLIP_RECEIVED }} className='bg-[#2a2a2a] px-5 py-4 flex items-center gap-1.5'>
+    <div className="flex justify-start px-4 py-1">
+        <div className="bg-[#121212] border border-[#27272a] px-3 py-2 rounded-sm flex items-center gap-1">
             {[0, 1, 2].map(i => (
-                <span key={i} className='w-2 h-2 rounded-full bg-[#888] block'
-                    style={{ animation: `typing-dot 1.2s ${i * 0.2}s infinite` }} />
+                <span
+                    key={i}
+                    className="w-1.5 h-1.5 rounded-full bg-neutral-400 block"
+                    style={{ animation: `typing-dot 1.2s ${i * 0.2}s infinite` }}
+                />
             ))}
         </div>
     </div>
 )
 
-// ─── Room list item ───────────────────────────────────────────────────────────
+// ─── RoomItem Component ───────────────────────────────────────────────────────
 const RoomItem = ({
     room, isActive, currentUserId, onClick, profiles, hasUnseenStory
 }: {
@@ -846,26 +767,33 @@ const RoomItem = ({
     return (
         <div
             onClick={onClick}
-            className={`w-full h-24 border-2 cursor-pointer flex items-center p-3 gap-3 transition-colors
-                ${isActive ? 'bg-[#ff4d00] border-[#ff4d00]' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]'}`}
+            className={`w-full p-3 border-b border-[#27272a] cursor-pointer flex items-center gap-3 transition-all ${isActive
+                    ? 'bg-[#18181b] border-l-2 border-l-white'
+                    : 'hover:bg-[#121212]'
+                }`}
         >
-            <div className='relative flex-shrink-0'>
+            <div className="relative shrink-0">
                 {avatar ? (
-                    <img src={avatar} alt={otherName} className={`h-12 w-12 rounded-full object-cover ${hasUnseenStory ? 'border-2 border-[#ff4d00] p-0.5' : ''}`} />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatar} alt={otherName} className={`h-10 w-10 rounded-full object-cover border border-neutral-700 ${hasUnseenStory ? 'ring-2 ring-white ring-offset-2 ring-offset-[#080808]' : ''}`} />
                 ) : (
-                    <div className={`h-12 w-12 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm ${hasUnseenStory ? 'border-2 border-[#ff4d00] p-0.5' : ''}`}>
+                    <div className="h-10 w-10 bg-neutral-800 text-white text-sm flex items-center justify-center rounded-full font-bold border border-neutral-700">
                         {otherName[0]?.toUpperCase()}
                     </div>
                 )}
             </div>
-            <div className='grow flex flex-col gap-0.5 overflow-hidden'>
-                <div className='flex justify-between items-center'>
-                    <p className='font-bold text-sm text-white'>{otherName}</p>
-                    <p className={`text-[10px] ${isActive ? 'text-white/70' : 'text-[#666]'}`}>
-                        {room.updatedAt ? formatTime(new Date(room.updatedAt)) : ''}
+            <div className="grow flex flex-col gap-0.5 overflow-hidden text-left">
+                <div className="flex justify-between items-center">
+                    <p className={`font-medium text-xs tracking-tight truncate ${isActive ? 'text-white font-semibold' : 'text-neutral-200'}`}>
+                        {otherName}
                     </p>
+                    <span className="font-mono text-[10px] text-neutral-500">
+                        {room.updatedAt ? formatTime(new Date(room.updatedAt)) : ''}
+                    </span>
                 </div>
-                <p className={`text-xs truncate ${isActive ? 'text-white/80' : 'text-[#888]'}`}>{lastMessage(room)}</p>
+                <p className="text-xs text-neutral-500 truncate font-sans">
+                    {lastMessage(room)}
+                </p>
             </div>
         </div>
     )
@@ -882,11 +810,10 @@ const CreateGroupModal = ({
     const [name, setName] = useState('')
     const [avatarUrl, setAvatarUrl] = useState('')
     const [uploadingAvatar, setUploadingAvatar] = useState(false)
-    const [dragActive, setDragActive] = useState(false)
-    const fileInputRef = useRef<HTMLInputElement>(null)
-    const [buddies, setBuddies] = useState<{ id: string, name: string }[]>([])
+    const [buddies, setBuddies] = useState<{ id: string, name: string, avatar?: string }[]>([])
     const [selected, setSelected] = useState<Set<string>>(new Set())
     const [loading, setLoading] = useState(true)
+    const avatarInputRef = useRef<HTMLInputElement>(null)
     const { user } = useAuth()
 
     useEffect(() => {
@@ -894,9 +821,9 @@ const CreateGroupModal = ({
             const accepted = relations.filter(r => r.status === 'accepted')
             const buddyIds = accepted.map(r => r.requester_id === user?.id ? r.receiver_id : r.requester_id)
             const profs = await Promise.all(buddyIds.map(id => getUserProfile(id).catch(() => null)))
-            const list = profs.filter(Boolean).map(p => ({ id: p!.id, name: p!.displayName }));
+            const list = profs.filter(Boolean).map(p => ({ id: p!.id, name: p!.displayName, avatar: p!.avatar }));
             if (!list.some(b => b.id === TALKIE_BOT_PROFILE.id)) {
-                list.unshift({ id: TALKIE_BOT_PROFILE.id, name: 'TalkieBot 🤖 (AI Assistant)' });
+                list.unshift({ id: TALKIE_BOT_PROFILE.id, name: 'TalkieBot (AI Assistant)', avatar: TALKIE_BOT_PROFILE.avatar });
             }
             setBuddies(list);
             setLoading(false);
@@ -906,29 +833,19 @@ const CreateGroupModal = ({
         })
     }, [user?.id])
 
-    const handleUpload = async (file: File) => {
+    const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
         setUploadingAvatar(true)
         try {
             const res = await uploadFile(file)
             setAvatarUrl(res.url)
-            toast.success("Avatar uploaded")
+            toast.success("Group picture uploaded")
         } catch {
-            toast.error("Failed to upload avatar")
+            toast.error("Failed to upload group picture")
         } finally {
             setUploadingAvatar(false)
         }
-    }
-
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault()
-        setDragActive(false)
-        const file = e.dataTransfer.files?.[0]
-        if (file) handleUpload(file)
-    }
-
-    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (file) handleUpload(file)
     }
 
     const toggleBuddy = (id: string) => {
@@ -942,95 +859,85 @@ const CreateGroupModal = ({
         e.preventDefault()
         if (!name.trim()) return toast.error("Group name is required")
         if (selected.size === 0) return toast.error("Select at least one member")
-        onCreate(name.trim(), Array.from(selected), avatarUrl)
+        onCreate(name.trim(), Array.from(selected), avatarUrl || undefined)
     }
 
     return (
-        <div className="fixed inset-0 bg-[#131313] z-[100] flex flex-col items-center pt-0 md:pt-10 overflow-y-auto pb-20">
-            <motion.div
-                initial={{ opacity: 0, y: 50 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 50 }}
-                className={`w-full max-w-2xl bg-[#252525] flex flex-col min-h-screen md:min-h-0 p-8 shadow-2xl ${jetbrains.className}`}
-            >
-                <div className="flex justify-between items-center mb-8">
-                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors flex items-center gap-2">
-                        <ArrowLeft size={24} /> <span className="font-bold">BACK</span>
-                    </button>
-                    <h2 className="text-2xl md:text-3xl font-black text-white">NEW GROUP</h2>
-                </div>
-
-                <form onSubmit={handleSubmit} className="flex flex-col gap-8 flex-1">
+        <Modal isOpen={true} onClose={onClose} title="Create New Group" maxWidth="md">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4 text-left">
+                {/* Group Avatar Upload Area */}
+                <div className="flex items-center gap-4 border-b border-[#27272a] pb-4">
+                    <input
+                        type="file"
+                        ref={avatarInputRef}
+                        onChange={handleAvatarUpload}
+                        accept="image/*"
+                        className="hidden"
+                    />
                     <div
-                        className={`flex flex-col items-center justify-center p-8 border-4 border-dashed rounded-xl transition-colors cursor-pointer ${dragActive ? 'border-[#ff4d00] bg-[#ff4d00]/10' : 'border-[#353535] hover:border-[#ff4d00]/50'}`}
-                        onDragOver={e => { e.preventDefault(); setDragActive(true); }}
-                        onDragLeave={() => setDragActive(false)}
-                        onDrop={handleDrop}
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={() => avatarInputRef.current?.click()}
+                        className="relative w-14 h-14 rounded-full bg-[#18181b] border border-[#27272a] hover:border-white transition-all cursor-pointer flex items-center justify-center overflow-hidden shrink-0 group"
                     >
-                        <input type="file" ref={fileInputRef} onChange={handleAvatarChange} className="hidden" accept="image/*" />
-
                         {avatarUrl ? (
-                            <img src={avatarUrl} alt="Preview" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={avatarUrl} alt="Group Avatar" className="w-full h-full object-cover" />
                         ) : (
-                            <div className="w-32 h-32 rounded-full bg-[#1c1c1c] flex items-center justify-center text-[#ff4d00]">
-                                {uploadingAvatar ? <Loader2 size={40} className="animate-spin" /> : <UserCircle size={64} />}
+                            <div className="flex flex-col items-center gap-1 text-neutral-400 group-hover:text-white">
+                                {uploadingAvatar ? <Loader2 size={18} className="animate-spin" /> : <Camera size={18} />}
                             </div>
                         )}
-                        <p className={`mt-4 text-[#888] font-bold text-center ${anybody.className}`}>
-                            {uploadingAvatar ? 'Uploading...' : 'Drag & Drop an avatar here, or click to select'}
-                        </p>
                     </div>
-
-                    <div className="flex flex-col">
-                        <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
-                            Group Name <span className="text-[#ff4d00]">*</span>
-                        </label>
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={e => setName(e.target.value)}
-                            placeholder="e.g. The Squad"
-                            className={`w-full h-14 bg-[#353535] outline-none border-b-4 border-b-[#525252] focus:border-b-[#ff4d00] transition-colors px-6 text-white font-bold text-lg ${anybody.className}`}
-                        />
+                    <div className="flex flex-col text-left">
+                        <span className="text-xs font-semibold text-neutral-200">Group Picture</span>
+                        <span className="text-[11px] text-neutral-500">Optional · Click icon to upload avatar photo</span>
                     </div>
+                </div>
 
-                    <div className="flex flex-col flex-1">
-                        <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
-                            Select Members ({selected.size}) <span className="text-[#ff4d00]">*</span>
-                        </label>
-                        <div className="flex-1 overflow-y-auto flex flex-col gap-2 bg-[#1c1c1c] p-4 border-2 border-[#353535] min-h-[250px] max-h-[350px]">
-                            {loading ? (
-                                <div className="flex justify-center py-10"><Loader2 className="animate-spin text-[#ff4d00]" size={32} /></div>
-                            ) : buddies.length === 0 ? (
-                                <p className={`text-center text-[#555] py-10 ${anybody.className}`}>No buddies available to add</p>
-                            ) : (
-                                buddies.map(b => (
-                                    <div
-                                        key={b.id}
-                                        onClick={() => toggleBuddy(b.id)}
-                                        className={`p-4 flex items-center justify-between cursor-pointer border-2 transition-all ${selected.has(b.id) ? 'bg-[#ff4d00]/20 border-[#ff4d00] translate-x-2' : 'bg-[#252525] border-[#353535] hover:border-[#ff4d00]/50'
-                                            }`}
-                                    >
-                                        <span className={`text-base text-white font-bold ${anybody.className}`}>{b.name}</span>
-                                        {selected.has(b.id) && <Check size={20} className="text-[#ff4d00]" />}
+                <Input
+                    label="Group Name"
+                    placeholder="e.g. Project Discussion"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                />
+
+                <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-neutral-300">Select Members ({selected.size})</label>
+                    <div className="max-h-48 overflow-y-auto border border-[#27272a] bg-[#121212] p-1 rounded-sm flex flex-col gap-1">
+                        {loading ? (
+                            <div className="flex justify-center py-6"><Loader2 className="animate-spin text-neutral-400" size={20} /></div>
+                        ) : buddies.length === 0 ? (
+                            <p className="text-center text-neutral-500 text-xs py-6">No connected buddies found</p>
+                        ) : (
+                            buddies.map(b => (
+                                <div
+                                    key={b.id}
+                                    onClick={() => toggleBuddy(b.id)}
+                                    className={`p-2 flex items-center justify-between cursor-pointer border rounded-xs transition-colors ${selected.has(b.id) ? 'bg-[#18181b] border-white text-white' : 'border-transparent text-neutral-300 hover:bg-[#161616]'
+                                        }`}
+                                >
+                                    <div className="flex items-center gap-2.5">
+                                        {b.avatar ? (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img src={b.avatar} alt={b.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                                        ) : (
+                                            <div className="w-6 h-6 rounded-full bg-neutral-800 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
+                                                {b.name[0]?.toUpperCase()}
+                                            </div>
+                                        )}
+                                        <span className="text-xs font-medium">{b.name}</span>
                                     </div>
-                                ))
-                            )}
-                        </div>
+                                    {selected.has(b.id) && <Check size={14} className="text-white" />}
+                                </div>
+                            ))
+                        )}
                     </div>
+                </div>
 
-                    <motion.button
-                        whileTap={{ scale: 0.97 }}
-                        type="submit"
-                        disabled={uploadingAvatar}
-                        className={`w-full h-14 bg-[#ff4d00] text-xl font-extrabold text-white mt-4 disabled:opacity-50 [clip-path:polygon(16px_0%,100%_0%,100%_calc(100%-16px),calc(100%-16px)_100%,0%_100%,0%_16px)]`}
-                    >
-                        CREATE GROUP
-                    </motion.button>
-                </form>
-            </motion.div>
-        </div>
+                <Button type="submit" variant="primary" size="lg" className="w-full mt-2" isLoading={uploadingAvatar}>
+                    CREATE GROUP
+                </Button>
+            </form>
+        </Modal>
     )
 }
 
@@ -1051,205 +958,48 @@ const GroupInfoModal = ({
     onLeave: () => void
 }) => {
     const [name, setName] = useState(room.name || '')
-    const [avatarUrl, setAvatarUrl] = useState(room.avatar || '')
-    const [isEditing, setIsEditing] = useState(false)
-    const [loading, setLoading] = useState(false)
-    const [uploadingAvatar, setUploadingAvatar] = useState(false)
-    const [dragActive, setDragActive] = useState(false)
-    const avatarInputRef = useRef<HTMLInputElement>(null)
     const myRole = room.members.find(m => m.userId === currentUserId)?.role || 'member'
-    const isAdmin = myRole === 'admin' || myRole === 'owner'
-
-    const handleUpload = async (file: File) => {
-        setUploadingAvatar(true)
-        try {
-            const res = await uploadFile(file)
-            setAvatarUrl(res.url)
-            toast.success("Avatar uploaded")
-        } catch {
-            toast.error("Failed to upload avatar")
-        } finally {
-            setUploadingAvatar(false)
-        }
-    }
-
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault()
-        setDragActive(false)
-        if (!isEditing) return
-        const file = e.dataTransfer.files?.[0]
-        if (file) handleUpload(file)
-    }
-
-    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (file) handleUpload(file)
-    }
-
-    const handleUpdate = async () => {
-        if (!name.trim()) return toast.error("Name required")
-        setLoading(true)
-        try {
-            const updated = await updateGroupInfo(room._id, { name: name.trim(), avatar: avatarUrl })
-            onRoomUpdated(updated)
-            setIsEditing(false)
-            toast.success("Group updated")
-        } catch {
-            toast.error("Failed to update group")
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    const handleAction = async (action: 'promote' | 'demote' | 'remove', memberId: string) => {
-        try {
-            let updated: Room;
-            if (action === 'promote') updated = await promoteMember(room._id, memberId)
-            else if (action === 'demote') updated = await demoteMember(room._id, memberId)
-            else updated = await removeMember(room._id, memberId)
-            onRoomUpdated(updated)
-            toast.success(`Member ${action}d`)
-        } catch {
-            toast.error(`Failed to ${action} member`)
-        }
-    }
-
-    const handleLeave = async () => {
-        if (!window.confirm("Are you sure you want to leave this group?")) return
-        try {
-            await removeMember(room._id, currentUserId)
-            onLeave()
-            toast.success("You left the group")
-        } catch {
-            toast.error("Failed to leave group")
-        }
-    }
 
     return (
-        <div className="fixed inset-0 bg-[#131313] z-[100] flex flex-col items-center pt-0 md:pt-10 overflow-y-auto pb-20">
-            <motion.div
-                initial={{ opacity: 0, y: 50 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 50 }}
-                className={`w-full max-w-2xl bg-[#252525] flex flex-col min-h-screen md:min-h-0 p-8 shadow-2xl ${jetbrains.className}`}
-            >
-                <div className="flex justify-between items-center mb-8">
-                    <button onClick={onClose} className="text-[#888] hover:text-white transition-colors flex items-center gap-2">
-                        <ArrowLeft size={24} /> <span className="font-bold">BACK</span>
-                    </button>
-                    <h2 className="text-2xl md:text-3xl font-black text-white">GROUP INFO</h2>
+        <Modal isOpen={true} onClose={onClose} title={room.name || 'Group Details'} maxWidth="md">
+            <div className="flex flex-col gap-4 text-left">
+                <div className="flex items-center gap-3 border-b border-[#27272a] pb-4">
+                    <div className="w-12 h-12 bg-white text-black font-bold text-lg flex items-center justify-center rounded-full">
+                        {room.name?.[0]?.toUpperCase() || 'G'}
+                    </div>
+                    <div className="flex flex-col">
+                        <span className="text-base font-bold text-neutral-100">{room.name}</span>
+                        <span className="text-xs text-neutral-500">{room.members.length} members</span>
+                    </div>
                 </div>
 
-                {isEditing ? (
-                    <div className="flex flex-col gap-8">
-                        <div
-                            className={`flex flex-col items-center justify-center p-8 border-4 border-dashed rounded-xl transition-colors cursor-pointer ${dragActive ? 'border-[#ff4d00] bg-[#ff4d00]/10' : 'border-[#353535] hover:border-[#ff4d00]/50'}`}
-                            onDragOver={e => { e.preventDefault(); setDragActive(true); }}
-                            onDragLeave={() => setDragActive(false)}
-                            onDrop={handleDrop}
-                            onClick={() => avatarInputRef.current?.click()}
-                        >
-                            <input type="file" ref={avatarInputRef} className="hidden" onChange={handleAvatarChange} accept="image/*" />
-
-                            {avatarUrl ? (
-                                <img src={avatarUrl} alt="Group Avatar" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
-                            ) : (
-                                <div className="w-32 h-32 rounded-full bg-[#1c1c1c] flex items-center justify-center text-[#ff4d00]">
-                                    {uploadingAvatar ? <Loader2 size={40} className="animate-spin" /> : <UserCircle size={64} />}
-                                </div>
-                            )}
-                            <p className={`mt-4 text-[#888] font-bold text-center ${anybody.className}`}>
-                                {uploadingAvatar ? 'Uploading...' : 'Drag & Drop to change avatar, or click'}
-                            </p>
-                        </div>
-
-                        <div className="flex flex-col">
-                            <label className={`text-sm text-[#aaa] mb-2 font-light ${anybody.className}`}>
-                                Group Name <span className="text-[#ff4d00]">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={name}
-                                onChange={e => setName(e.target.value)}
-                                className={`w-full h-14 bg-[#353535] outline-none border-b-4 border-b-[#525252] focus:border-b-[#ff4d00] transition-colors px-6 text-white font-bold text-lg ${anybody.className}`}
-                            />
-                        </div>
-                        <div className="flex gap-4">
-                            <button onClick={handleUpdate} disabled={loading || uploadingAvatar} className="flex-1 bg-[#ff4d00] text-white py-3 text-lg font-bold disabled:opacity-50">Save Changes</button>
-                            <button onClick={() => setIsEditing(false)} className="flex-1 bg-[#353535] text-white py-3 text-lg font-bold">Cancel</button>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="flex flex-col items-center gap-6">
-                        {room.avatar ? (
-                            <img src={room.avatar} alt="Group Avatar" className="w-32 h-32 rounded-full object-cover border-4 border-[#ff4d00] shadow-xl" />
-                        ) : (
-                            <div className="w-32 h-32 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-5xl font-black shadow-xl">
-                                {room.name?.[0]?.toUpperCase() || 'G'}
-                            </div>
-                        )}
-                        <div className="flex flex-col items-center gap-2">
-                            <div className="flex items-center gap-4">
-                                <span className={`text-3xl text-white font-black ${anybody.className}`}>{room.name || 'Group Chat'}</span>
-                                {isAdmin && (
-                                    <button onClick={() => setIsEditing(true)} className="text-[#ff4d00] hover:text-white text-sm underline font-bold bg-[#ff4d00]/20 px-3 py-1 rounded-full">Edit</button>
-                                )}
-                            </div>
-                            <span className="text-sm text-[#888] bg-[#1c1c1c] px-4 py-1 rounded-full font-bold">{room.members.length} members</span>
-                        </div>
-                    </div>
-                )}
-
-                <div className="flex flex-col gap-4 mt-8 flex-1">
-                    <label className={`text-lg text-[#aaa] font-bold ${anybody.className}`}>Members ({room.members.length})</label>
-                    <div className="flex flex-col gap-3 overflow-y-auto pr-2">
+                <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium text-neutral-400">Members List</span>
+                    <div className="max-h-52 overflow-y-auto flex flex-col gap-1 border border-[#27272a] bg-[#121212] p-1 rounded-sm">
                         {room.members.map(m => {
                             const isMe = m.userId === currentUserId
                             const prof = profiles[m.userId]
                             return (
-                                <div key={m.userId} className="flex items-center justify-between bg-[#1c1c1c] p-4 border-l-4 border-[#353535] hover:border-[#ff4d00] transition-colors">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-full bg-[#ff4d00] flex items-center justify-center text-white text-sm font-bold shadow-md">
-                                            {prof?.avatar ? <img src={prof.avatar} alt="avatar" className="w-full h-full rounded-full object-cover" /> : (prof?.displayName?.[0]?.toUpperCase() || '?')}
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className={`text-base text-white font-bold ${anybody.className}`}>{prof?.displayName || 'Unknown'} {isMe && <span className="text-[#ff4d00]">(You)</span>}</span>
-                                            <span className="text-[10px] text-[#888] uppercase tracking-wider font-black">{m.role}</span>
-                                        </div>
-                                    </div>
-
-                                    {!isMe && isAdmin && m.role !== 'owner' && (
-                                        <div className="flex gap-3">
-                                            {m.role === 'member' && myRole === 'owner' && (
-                                                <button onClick={() => handleAction('promote', m.userId)} className="text-xs text-green-500 hover:text-green-400 font-bold bg-green-500/10 px-3 py-1 rounded-full transition-colors">Promote</button>
-                                            )}
-                                            {m.role === 'admin' && myRole === 'owner' && (
-                                                <button onClick={() => handleAction('demote', m.userId)} className="text-xs text-orange-500 hover:text-orange-400 font-bold bg-orange-500/10 px-3 py-1 rounded-full transition-colors">Demote</button>
-                                            )}
-                                            {((myRole === 'owner') || (myRole === 'admin' && m.role === 'member')) && (
-                                                <button onClick={() => handleAction('remove', m.userId)} className="text-xs text-red-500 hover:text-red-400 font-bold bg-red-500/10 px-3 py-1 rounded-full transition-colors">Remove</button>
-                                            )}
-                                        </div>
-                                    )}
+                                <div key={m.userId} className="flex items-center justify-between p-2 border-b border-[#27272a] last:border-0">
+                                    <span className="text-xs font-semibold text-neutral-200">
+                                        {prof?.displayName || 'User'} {isMe && '(You)'}
+                                    </span>
+                                    <Badge variant="subtle" size="sm">{m.role}</Badge>
                                 </div>
                             )
                         })}
                     </div>
                 </div>
 
-                <motion.button
-                    whileTap={{ scale: 0.97 }}
-                    onClick={handleLeave}
-                    className={`w-full h-14 bg-red-600/10 text-red-500 text-lg font-extrabold mt-8 border-2 border-red-500/50 hover:bg-red-500 hover:text-white transition-colors [clip-path:polygon(16px_0%,100%_0%,100%_calc(100%-16px),calc(100%-16px)_100%,0%_100%,0%_16px)]`}
-                >
+                <Button variant="danger" size="md" onClick={onLeave} className="w-full mt-2">
                     LEAVE GROUP
-                </motion.button>
-            </motion.div>
-        </div>
+                </Button>
+            </div>
+        </Modal>
     )
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+// ─── Main Chat Inner Component ────────────────────────────────────────────────
 const ChatInner = () => {
     const pathname = usePathname()
     const router = useRouter()
@@ -1263,7 +1013,7 @@ const ChatInner = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([])
     const [input, setInput] = useState('')
     const [showEmojiPicker, setShowEmojiPicker] = useState(false)
-    const [isTyping, setIsTyping] = useState(false)     // remote peer typing
+    const [isTyping, setIsTyping] = useState(false)
     const [roomsLoading, setRoomsLoading] = useState(true)
     const [msgsLoading, setMsgsLoading] = useState(false)
     const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false)
@@ -1286,19 +1036,19 @@ const ChatInner = () => {
     const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null)
     const [storiesFeed, setStoriesFeed] = useState<StoryFeedEntry[]>([])
 
+    // Command & Mention autocomplete state
     const { filteredCommands, commandHint, mentionSuggestions } = useMemo(() => {
         let commands: any[] = [];
         let hint = null;
         let mentions: UserProfile[] = [];
 
-        // Mention suggestions logic
         const lastWordMatch = input.match(/(?:^|\s)(@\w*)$/);
         if (lastWordMatch && activeRoom) {
             const typedMention = lastWordMatch[1].slice(1).toLowerCase();
             const members = activeRoom.members
                 .map(m => profiles[m.userId] || (m.userId === TALKIE_BOT_PROFILE.id ? TALKIE_BOT_PROFILE : null))
                 .filter(Boolean) as UserProfile[];
-            
+
             if (!members.some(p => p.id === TALKIE_BOT_PROFILE.id)) {
                 members.push(TALKIE_BOT_PROFILE);
             }
@@ -1309,15 +1059,12 @@ const ChatInner = () => {
             );
         }
 
-        // Command suggestions logic
         if (input.startsWith('/')) {
             const firstSpace = input.indexOf(' ');
             if (firstSpace === -1) {
-                // Still typing the command name
                 const typed = input.toLowerCase();
                 commands = COMMANDS.filter(c => c.command.startsWith(typed));
             } else {
-                // Command is already typed, show hint
                 const typedCmd = input.slice(0, firstSpace).toLowerCase();
                 const matchedCmd = COMMANDS.find(c => c.command === typedCmd);
                 if (matchedCmd && matchedCmd.usage !== matchedCmd.command) {
@@ -1332,7 +1079,6 @@ const ChatInner = () => {
         entry._id !== currentUserId && entry.stories.some(s => !(s.viewedBy && s.viewedBy[currentUserId]))
     )
 
-    // ── Click outside emoji picker ────────────────────────────────────────────
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
@@ -1347,7 +1093,6 @@ const ChatInner = () => {
         }
     }, [showEmojiPicker])
 
-    // ── Check for pending buddy requests ───────────────────────────────────────
     useEffect(() => {
         if (!user) return
         getAllRelations()
@@ -1357,14 +1102,13 @@ const ChatInner = () => {
                 )
                 setHasPendingRequests(incoming.length > 0)
             })
-            .catch(() => { /* silently ignore */ })
+            .catch(() => { })
 
         getStoryFeed()
             .then(feed => setStoriesFeed(feed))
-            .catch(() => { /* silently ignore */ })
+            .catch(() => { })
     }, [user])
 
-    // ── Load rooms on mount ───────────────────────────────────────────────────
     useEffect(() => {
         secureStore.getCachedRooms().then(cached => {
             if (cached.length > 0) {
@@ -1380,10 +1124,9 @@ const ChatInner = () => {
 
                 const ids = new Set<string>()
                 data.forEach(r => {
-                    if (r.kind === 'dm') {
-                        const otherId = r.members.find(m => m.userId !== user?.id)?.userId
-                        if (otherId) ids.add(otherId)
-                    }
+                    r.members.forEach(m => {
+                        if (m.userId !== user?.id) ids.add(m.userId)
+                    })
                 })
                 const profs: Record<string, UserProfile> = {}
                 await Promise.all(Array.from(ids).map(async id => {
@@ -1406,10 +1149,8 @@ const ChatInner = () => {
             })
             .catch(() => toast.error('Could not load conversations'))
             .finally(() => setRoomsLoading(false))
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, user?.id])
 
-    // ── Periodic presence refresh for the active DM partner ────────────────
     useEffect(() => {
         if (!activeRoom || activeRoom.kind !== 'dm') return;
         const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
@@ -1418,27 +1159,23 @@ const ChatInner = () => {
         const refreshPresence = () => {
             getUserProfile(otherId)
                 .then(p => setProfiles(prev => ({ ...prev, [otherId]: p })))
-                .catch(() => { /* silently ignore — stale status is acceptable */ });
+                .catch(() => { });
         };
 
-        // Refresh immediately when switching rooms, then every 30 seconds
         refreshPresence();
         const interval = setInterval(refreshPresence, 30_000);
         return () => clearInterval(interval);
     }, [activeRoom?._id, currentUserId])
 
-    // ── On room change: join socket room + load first page of messages ─────
     useEffect(() => {
         if (!activeRoom) return
         const roomId = activeRoom._id
 
-        // Leave previous room
         if (prevRoomId.current && prevRoomId.current !== roomId) {
             leaveRoom(prevRoomId.current)
         }
         prevRoomId.current = roomId
 
-        // Join new room
         joinRoom(roomId)
         setMessages([])
         setPage(1)
@@ -1449,7 +1186,7 @@ const ChatInner = () => {
         secureStore.getCachedMessagesForRoom(roomId).then(cached => {
             if (cached.length > 0) {
                 setMessages(prev => {
-                    if (prev.length > 0) return prev; // If network already landed, don't overwrite
+                    if (prev.length > 0) return prev;
                     return cached;
                 });
                 setMsgsLoading(false);
@@ -1466,12 +1203,10 @@ const ChatInner = () => {
             .finally(() => setMsgsLoading(false))
     }, [activeRoom])
 
-    // ── Auto-scroll to bottom when messages change ────────────────────────
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, [messages, isTyping])
 
-    // ── Socket events ──────────────────────────────────────────────────────
     useEffect(() => {
         if (!socket) return
 
@@ -1479,18 +1214,15 @@ const ChatInner = () => {
             if (msg.roomId === activeRoom?._id) {
                 const decryptedMsg = await decryptIncomingMessage(msg)
                 setMessages(prev => [...prev, decryptedMsg])
-                // Mark as seen if the message is not ours
                 if (msg.senderId !== user?.id) {
                     markAsSeen(msg.roomId, msg._id)
                 }
             }
 
-            // Deliver the message if it's not ours
             if (msg.senderId !== user?.id) {
                 messageDelivered(msg.roomId, msg._id)
             }
 
-            // Bubble room to top of list
             setRooms(prev => {
                 const updated = prev.map(r => r._id === msg.roomId ? { ...r, updatedAt: msg.createdAt, lastMessageRecord: msg } : r)
                 return [...updated].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
@@ -1571,7 +1303,6 @@ const ChatInner = () => {
         }
     }, [socket, activeRoom, user?.id])
 
-    // ── Textarea auto-resize ──────────────────────────────────────────────
     const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value)
         const el = textareaRef.current
@@ -1586,11 +1317,12 @@ const ChatInner = () => {
         }
     }
 
-    // ── Send message via socket ───────────────────────────────────────────
+    // ── Send Message & Commands Handler ───────────────────────────────────────
     const sendMessageHandler = useCallback(async () => {
         let finalContent = input.trim()
         if (!finalContent || !activeRoom) return
 
+        // ── Command Parsing ───────────────────────────────────────────────────
         if (finalContent.startsWith('/')) {
             const args = finalContent.substring(1).split(' ');
             const command = args[0].toLowerCase();
@@ -1600,13 +1332,14 @@ const ChatInner = () => {
                 let clean = name.startsWith('@') ? name.slice(1) : name;
                 clean = clean.toLowerCase();
                 if (clean === 'me') return currentUserId;
-                
+
                 return activeRoom.members.find(m => {
+                    if (m.userId.toLowerCase() === clean) return true;
                     const p = profiles[m.userId];
                     if (!p) return false;
-                    return p.username.toLowerCase() === clean || 
-                           p.displayName.toLowerCase() === clean ||
-                           p.displayName.toLowerCase().replace(/\s+/g, '') === clean;
+                    return p.username.toLowerCase() === clean ||
+                        p.displayName.toLowerCase() === clean ||
+                        p.displayName.toLowerCase().replace(/\s+/g, '') === clean;
                 })?.userId;
             };
 
@@ -1615,28 +1348,111 @@ const ChatInner = () => {
                     _id: 'local-' + Date.now(),
                     roomId: activeRoom._id,
                     senderId: 'system',
-                    content: "Available commands:\n/roll - Roll a die\n/flip - Flip a coin\n/8ball <question>\n/shrug\n/flip-table\n/vote <question> options: a,b,c\nGroup Admin: /promote @user, /demote @user, /kick @user, /mute @user <duration>, /unmute @user\nGroup: /whisper @user <msg>, /request <action> @user [reason], /requests, /approve <id>, /deny <id>",
+                    content: "Available commands:\n/choose <options: a, b, c>\n/topic - Random conversation starter\n/spoiler <text> - Send blurred secret text\n/quote - Send a random quote\n/timer <seconds> - Start a countdown\n/roll - Roll a die\n/flip - Flip a coin\n/8ball <question>\n/shrug\n/flip-table\n/vote <question> options: a,b,c\nGroup Admin: /promote @user, /demote @user, /kick @user, /mute @user <duration>, /unmute @user\nGroup: /whisper @user <msg>, /request <action> @user [reason], /requests, /approve <id>, /deny <id>",
                     seenBy: [],
                     isDeleted: false,
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                 };
                 setMessages(prev => [...prev, helpMsg]);
-                setInput('');
-                return;
+                setInput(''); return;
+            } else if (command === 'choose') {
+                const rest = args.slice(1).join(' ');
+                const options = rest.split(',').map(o => o.trim()).filter(Boolean);
+                if (options.length < 2) {
+                    toast.error("Format: /choose Option 1, Option 2, Option 3");
+                    return;
+                }
+                const chosen = options[Math.floor(Math.random() * options.length)];
+                if (socket) {
+                    socket.emit('broadcastSystemMessage', {
+                        roomId: activeRoom._id,
+                        content: `@${profiles[currentUserId]?.displayName || 'Someone'} asked to choose between: ${options.join(', ')}\nResult: ${chosen}`
+                    });
+                }
+                setInput(''); return;
+            } else if (command === 'topic') {
+                const TOPICS = [
+                    "If you could instantly master any skill in the world, what would it be?",
+                    "What is the best movie or TV show you have watched recently?",
+                    "If you could travel anywhere in the universe right now, where would you go?",
+                    "What is your ultimate comfort food?",
+                    "If you could have dinner with any historical figure, who would it be?",
+                    "What is a book or movie that completely changed your perspective?",
+                    "What is the most underrated superpower?",
+                    "If you could only listen to one album for the rest of your life, what would it be?",
+                    "What is your favorite way to unwind after a long day?",
+                    "If you could create a new holiday, what would it celebrate?"
+                ];
+                const topic = TOPICS[Math.floor(Math.random() * TOPICS.length)];
+                if (socket) {
+                    socket.emit('broadcastSystemMessage', {
+                        roomId: activeRoom._id,
+                        content: `Conversation Starter:\n"${topic}"`
+                    });
+                }
+                setInput(''); return;
+            } else if (command === 'spoiler') {
+                const secretText = args.slice(1).join(' ');
+                if (!secretText.trim()) {
+                    toast.error("Format: /spoiler <your secret text>");
+                    return;
+                }
+                finalContent = JSON.stringify({ type: 'spoiler', text: secretText.trim() });
+            } else if (command === 'quote') {
+                const QUOTES = [
+                    `"Simplicity is prerequisite for reliability." — Edsger W. Dijkstra`,
+                    `"Code is like humor. When you have to explain it, it’s bad." — Cory House`,
+                    `"Make it work, make it right, make it fast." — Kent Beck`,
+                    `"First, solve the problem. Then, write the code." — John Johnson`,
+                    `"Any fool can write code that a computer can understand. Good programmers write code that humans can understand." — Martin Fowler`,
+                    `"Knowledge is power." — Francis Bacon`,
+                    `"The only way to do great work is to love what you do." — Steve Jobs`
+                ];
+                const quote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+                if (socket) {
+                    socket.emit('broadcastSystemMessage', {
+                        roomId: activeRoom._id,
+                        content: `${quote}`
+                    });
+                }
+                setInput(''); return;
+            } else if (command === 'timer') {
+                const sec = parseInt(args[1]);
+                if (isNaN(sec) || sec <= 0 || sec > 300) {
+                    toast.error("Format: /timer <seconds> (1 to 300)");
+                    return;
+                }
+                const senderName = profiles[currentUserId]?.displayName || 'Someone';
+                const roomId = activeRoom._id;
+                if (socket) {
+                    socket.emit('broadcastSystemMessage', {
+                        roomId: roomId,
+                        content: `@${senderName} started a ${sec}-second timer.`
+                    });
+                }
+                setTimeout(() => {
+                    if (socket) {
+                        socket.emit('broadcastSystemMessage', {
+                            roomId: roomId,
+                            content: `Timer expired! (${sec}s timer requested by @${senderName})`
+                        });
+                    }
+                }, sec * 1000);
+                setInput(''); return;
             } else if (command === 'roll') {
                 const result = Math.floor(Math.random() * 6) + 1;
-                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} rolled a ${result} 🎲` });
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} rolled a ${result}` });
                 setInput(''); return;
             } else if (command === 'flip') {
                 const result = Math.random() > 0.5 ? 'Heads' : 'Tails';
-                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} flipped a coin: ${result} 🪙` });
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} flipped a coin: ${result}` });
                 setInput(''); return;
             } else if (command === '8ball') {
                 const question = args.slice(1).join(' ');
                 const answers = ["It is certain.", "It is decidedly so.", "Without a doubt.", "Yes - definitely.", "You may rely on it.", "As I see it, yes.", "Most likely.", "Outlook good.", "Yes.", "Signs point to yes.", "Reply hazy, try again.", "Ask again later.", "Better not tell you now.", "Cannot predict now.", "Concentrate and ask again.", "Don't count on it.", "My reply is no.", "My sources say no.", "Outlook not so good.", "Very doubtful."];
                 const answer = answers[Math.floor(Math.random() * answers.length)];
-                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} asks the 8-Ball: ${question}\nAnswer: ${answer} 🎱` });
+                if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} asks the 8-Ball: ${question}\nAnswer: ${answer}` });
                 setInput(''); return;
             } else if (command === 'shrug') {
                 if (socket) socket.emit('broadcastSystemMessage', { roomId: activeRoom._id, content: `@${profiles[currentUserId]?.displayName || 'Someone'} ¯\\_(ツ)_/¯` });
@@ -1651,31 +1467,101 @@ const ChatInner = () => {
                     const options = optionsStr.split(',').map((o, i) => ({ id: String(i), text: o.trim() }));
                     finalContent = JSON.stringify({ type: 'poll', question: question.trim(), options });
                 } else {
-                    return; // invalid poll
+                    toast.error("Format: /vote <question> options: a, b, c");
+                    return;
                 }
             } else if (command === 'promote') {
                 const targetId = findUser(args[1]);
-                if (targetId) promoteMember(activeRoom._id, targetId);
+                if (!targetId) {
+                    toast.error(`User '${args[1] || ''}' not found in group`);
+                } else {
+                    try {
+                        await promoteMember(activeRoom._id, targetId);
+                        toast.success("Member promoted to admin!");
+                    } catch (err: any) {
+                        toast.error(err.response?.data?.message || err.message || "Failed to promote");
+                    }
+                }
                 setInput(''); return;
             } else if (command === 'demote') {
                 const targetId = findUser(args[1]);
-                if (targetId) demoteMember(activeRoom._id, targetId);
+                if (!targetId) {
+                    toast.error(`User '${args[1] || ''}' not found in group`);
+                } else {
+                    try {
+                        await demoteMember(activeRoom._id, targetId);
+                        toast.success("Member demoted!");
+                    } catch (err: any) {
+                        toast.error(err.response?.data?.message || err.message || "Failed to demote");
+                    }
+                }
                 setInput(''); return;
             } else if (command === 'kick') {
                 const targetId = findUser(args[1]);
-                if (targetId) removeMember(activeRoom._id, targetId);
+                if (!targetId) {
+                    toast.error(`User '${args[1] || ''}' not found in group`);
+                } else {
+                    try {
+                        await removeMember(activeRoom._id, targetId);
+                        toast.success("Member removed from group");
+                    } catch (err: any) {
+                        toast.error(err.response?.data?.message || err.message || "Failed to remove member");
+                    }
+                }
                 setInput(''); return;
             } else if (command === 'mute') {
                 const targetId = findUser(args[1]);
-                const duration = args[2] || '10m';
-                let ms = 10 * 60 * 1000;
-                if (duration.endsWith('h')) ms = parseInt(duration) * 60 * 60 * 1000;
-                else if (duration.endsWith('m')) ms = parseInt(duration) * 60 * 1000;
-                if (targetId && socket) socket.emit('muteMember', { roomId: activeRoom._id, memberId: targetId, durationMs: ms });
+                if (!targetId) {
+                    toast.error(`User '${args[1] || ''}' not found in group`);
+                } else {
+                    const rawDuration = args[2] || '60s';
+                    let ms = 60 * 1000;
+                    let durationLabel = '60 seconds';
+
+                    if (/^\d+s$/i.test(rawDuration)) {
+                        const sec = parseInt(rawDuration);
+                        ms = sec * 1000;
+                        durationLabel = `${sec} second${sec === 1 ? '' : 's'}`;
+                    } else if (/^\d+m$/i.test(rawDuration)) {
+                        const min = parseInt(rawDuration);
+                        ms = min * 60 * 1000;
+                        durationLabel = `${min} minute${min === 1 ? '' : 's'}`;
+                    } else if (/^\d+h$/i.test(rawDuration)) {
+                        const hrs = parseInt(rawDuration);
+                        ms = hrs * 60 * 60 * 1000;
+                        durationLabel = `${hrs} hour${hrs === 1 ? '' : 's'}`;
+                    } else if (/^\d+$/.test(rawDuration)) {
+                        const sec = parseInt(rawDuration);
+                        ms = sec * 1000;
+                        durationLabel = `${sec} second${sec === 1 ? '' : 's'}`;
+                    }
+
+                    if (socket) {
+                        socket.emit('muteMember', { roomId: activeRoom._id, memberId: targetId, durationMs: ms });
+                        const targetName = profiles[targetId]?.displayName || 'Member';
+                        socket.emit('broadcastSystemMessage', {
+                            roomId: activeRoom._id,
+                            content: `@${targetName} was muted for ${durationLabel} by @${profiles[currentUserId]?.displayName || 'Admin'}.`
+                        });
+                        toast.success(`Muted @${targetName} for ${durationLabel}`);
+                    }
+                }
                 setInput(''); return;
             } else if (command === 'unmute') {
                 const targetId = findUser(args[1]);
-                if (targetId && socket) socket.emit('unmuteMember', { roomId: activeRoom._id, memberId: targetId });
+                if (!targetId) {
+                    toast.error(`User '${args[1] || ''}' not found in group`);
+                } else {
+                    if (socket) {
+                        socket.emit('unmuteMember', { roomId: activeRoom._id, memberId: targetId });
+                        const targetName = profiles[targetId]?.displayName || 'Member';
+                        socket.emit('broadcastSystemMessage', {
+                            roomId: activeRoom._id,
+                            content: `@${targetName} was unmuted by @${profiles[currentUserId]?.displayName || 'Admin'}.`
+                        });
+                        toast.success(`Unmuted @${targetName}`);
+                    }
+                }
                 setInput(''); return;
             } else if (command === 'whisper') {
                 const targetId = findUser(args[1]);
@@ -1690,7 +1576,7 @@ const ChatInner = () => {
                 }
                 setInput(''); return;
             } else if (command === 'request') {
-                const type = args[1]; // kick, promote, demote, mute
+                const type = args[1];
                 const targetId = findUser(args[2]);
                 const reason = args.slice(3).join(' ');
                 if (targetId && socket) socket.emit('createRequest', { roomId: activeRoom._id, type, targetUserId: targetId, reason });
@@ -1725,7 +1611,7 @@ const ChatInner = () => {
         const isGroupChat = activeRoom.kind === 'group';
         const recipientUserId = isGroupChat ? undefined : activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
         if (!isGroupChat && !recipientUserId) {
-            toast.error("Cannot send E2EE message: recipient not found")
+            toast.error("Cannot send message: recipient not found")
             return
         }
 
@@ -1741,27 +1627,22 @@ const ChatInner = () => {
 
         try {
             await socketSend({ recipientUserId, senderUserId: currentUserId, roomId: activeRoom._id, content: finalContent, replyTo: replyToId, isGroupChat })
-        } catch (err) {
+        } catch {
             toast.error("Failed to send message")
             setInput(finalContent)
             setReplyingTo(oldReplyingTo)
         }
-    }, [input, activeRoom, replyingTo, currentUserId])
+    }, [input, activeRoom, replyingTo, currentUserId, profiles, rooms, socket])
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessageHandler() }
     }
 
-    // ── Handle File Upload ────────────────────────────────────────────────
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file || !activeRoom) return
         const isGroupChat = activeRoom.kind === 'group';
         const recipientUserId = isGroupChat ? undefined : activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
-        if (!isGroupChat && !recipientUserId) {
-            toast.error("Cannot upload: recipient not found")
-            return
-        }
 
         setUploadingFile(true)
         try {
@@ -1777,35 +1658,26 @@ const ChatInner = () => {
             })
             setReplyingTo(null)
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err.message || "Unknown error";
-            toast.error("Failed to upload file: " + msg)
+            toast.error("Upload failed: " + (err?.response?.data?.message || err.message))
         } finally {
             setUploadingFile(false)
             if (fileInputRef.current) fileInputRef.current.value = ''
         }
     }
 
-    // ── Handle Audio Send ─────────────────────────────────────────────────
     const handleAudioSend = useCallback(async (blob: Blob, durationMs: number) => {
         if (!activeRoom) return;
         const isGroupChat = activeRoom.kind === 'group';
         const recipientUserId = isGroupChat ? undefined : activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
-        if (!isGroupChat && !recipientUserId) {
-            toast.error("Cannot send: recipient not found");
-            return;
-        }
+
         setSendingAudio(true);
         setIsAudioRecorderOpen(false);
         try {
-            // 1. Encrypt the audio blob client-side
             const rawBytes = new Uint8Array(await blob.arrayBuffer());
             const { encryptedBlob, blobKeyB64, blobNonceB64 } = await encryptBlob(rawBytes);
-
-            // 2. Upload the encrypted blob to the file service
             const encryptedFile = new File([encryptedBlob as any], 'voice.enc', { type: 'application/octet-stream' });
             const res = await uploadFile(encryptedFile);
 
-            // 3. Send the message with encrypted metadata via the E2EE ratchet
             await sendAudioMessage({
                 recipientUserId,
                 senderUserId: currentUserId,
@@ -1818,22 +1690,16 @@ const ChatInner = () => {
                 isGroupChat
             });
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err.message || "Unknown error";
-            toast.error("Failed to send voice message: " + msg);
+            toast.error("Voice message failed: " + err.message);
         } finally {
             setSendingAudio(false);
         }
     }, [activeRoom, currentUserId]);
 
-    // ── Handle Forward ────────────────────────────────────────────────────
     const handleForward = useCallback(async (targetRoom: Room) => {
         if (!forwardingMessage) return;
         const isGroupChat = targetRoom.kind === 'group';
         const recipientUserId = isGroupChat ? undefined : targetRoom.members.find(m => m.userId !== currentUserId)?.userId;
-        if (!isGroupChat && !recipientUserId) {
-            toast.error("Cannot forward: recipient not found");
-            return;
-        }
         try {
             await forwardMessage({
                 recipientUserId,
@@ -1844,12 +1710,11 @@ const ChatInner = () => {
             });
             toast.success("Message forwarded!");
             setForwardingMessage(null);
-        } catch (err: any) {
-            toast.error("Failed to forward message");
+        } catch {
+            toast.error("Failed to forward");
         }
     }, [forwardingMessage, currentUserId]);
 
-    // ── Load older messages on scroll to top ──────────────────────────────
     const handleScroll = useCallback(async (e: React.UIEvent<HTMLDivElement>) => {
         const el = e.currentTarget
         if (el.scrollTop === 0 && hasMore && !msgsLoading && activeRoom) {
@@ -1871,45 +1736,23 @@ const ChatInner = () => {
 
     const grouped = groupByDate(messages)
 
-    const handleResendVerification = async () => {
-        try {
-            await resendVerification()
-            toast.success('Verification email resent!')
-        } catch (err: any) {
-            toast.error(err.response?.data?.message ?? 'Could not resend email')
-        }
-    }
-
-    const handleReplyClick = useCallback((msgId: string) => {
-        const el = document.getElementById(`message-${msgId}`);
-        if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.classList.add('bg-[#ff4d00]/20');
-            setTimeout(() => el.classList.remove('bg-[#ff4d00]/20'), 1500);
-        } else {
-            toast.error("Message not found (might be too old)");
-        }
-    }, []);
-
-    const handleCreateGroupSubmit = async (groupName: string, members: string[]) => {
-        try {
-            const room = await createRoom({ kind: 'group', members, name: groupName })
-            setRooms(prev => [room, ...prev])
-            setActiveRoom(room)
-            setIsCreateGroupOpen(false)
-            toast.success("Group created!")
-        } catch {
-            toast.error("Failed to create group")
-        }
-    }
-
     return (
-        <div className="flex flex-col h-screen overflow-hidden">
+        <div className="flex flex-col h-screen overflow-hidden bg-[#080808]">
             <AnimatePresence>
                 {isCreateGroupOpen && (
                     <CreateGroupModal
                         onClose={() => setIsCreateGroupOpen(false)}
-                        onCreate={handleCreateGroupSubmit}
+                        onCreate={async (groupName, members, avatar) => {
+                            try {
+                                const room = await createRoom({ kind: 'group', members, name: groupName, avatar })
+                                setRooms(prev => [room, ...prev])
+                                setActiveRoom(room)
+                                setIsCreateGroupOpen(false)
+                                toast.success("Group created!")
+                            } catch {
+                                toast.error("Failed to create group")
+                            }
+                        }}
                     />
                 )}
                 {showGroupInfo && activeRoom && activeRoom.kind === 'group' && (
@@ -1947,53 +1790,46 @@ const ChatInner = () => {
                 )}
             </AnimatePresence>
 
-            {user?.role === 'UNVERIFIED' && (
-                <div className="w-full bg-[#ff4d00]/20 border-b-2 border-[#ff4d00] py-2 px-6 flex justify-between items-center flex-shrink-0 z-50">
-                    <span className="text-sm text-white/90">Please verify your email address. Some features may be limited.</span>
-                    <button onClick={handleResendVerification} className="text-[#ff4d00] text-sm underline font-bold hover:text-white transition-colors">
-                        Resend Email
-                    </button>
-                </div>
-            )}
-
-            <style>{`
-                @keyframes typing-dot {
-                    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-                    30%           { transform: translateY(-5px); opacity: 1; }
-                }
-            `}</style>
-
-            <div className='w-full flex-1 bg-[#131313] flex flex-col md:flex-row overflow-hidden'>
-
-                {/* ── Left sidebar – chat list ──────────────────────────────── */}
-                <div className={`h-full w-full md:w-[23%] bg-[#252525] flex-col flex-shrink-0 ${activeRoom ? 'hidden md:flex' : 'flex'}`}>
-                    <div className='h-32 border-b-2 border-[#353535] flex flex-col items-center justify-center flex-shrink-0'>
-                        <div className='w-full h-[50%] flex items-center justify-between px-6'>
-                            <div className='h-full w-[50%] bg-[#ff4d00] flex items-center justify-center text-xs font-bold text-white'>
+            <div className="w-full flex-1 flex flex-col md:flex-row overflow-hidden">
+                {/* ── Left Sidebar: Chat List & App Header ───────────────────────── */}
+                <div className={`h-full w-full md:w-80 bg-[#121212] border-r border-[#27272a] flex-col flex-shrink-0 ${activeRoom ? 'hidden md:flex' : 'flex'}`}>
+                    {/* App Branding Top Bar */}
+                    <div className="h-16 border-b border-[#27272a] px-4 flex items-center justify-between flex-shrink-0">
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 bg-white text-black font-bold text-sm flex items-center justify-center rounded-sm">
+                                T
+                            </div>
+                            <span className="font-bold text-base text-neutral-100 tracking-tight">
                                 TALKIE
-                            </div>
-                            <div className='flex items-center gap-2'>
-                                <span onClick={() => setIsCreateGroupOpen(true)} title="Create Group" className='hover:text-[#ff4d00] cursor-pointer transition-colors'>
-                                    <Users size={18} />
-                                </span>
-                                <span onClick={() => router.push('/buddies')} title="Buddies" className='relative hover:text-[#ff4d00] cursor-pointer transition-colors'>
-                                    <SquarePen size={18} />
-                                    {hasPendingRequests && (
-                                        <span className='absolute -top-1.5 -right-1.5 w-3 h-3 bg-orange-500 rounded-full border-2 border-[#252525] animate-pulse' />
-                                    )}
-                                </span>
-                            </div>
+                            </span>
                         </div>
-                        <div className='w-full h-[50%] px-4 py-2'>
-                            <input type='text' placeholder='Search' className='w-full h-full bg-[#1c1c1c] border-2 border-[#353535] rounded-full px-4 text-[#ff4d00] placeholder-[#555] focus:outline-none focus:border-[#ff4d00] transition-colors text-sm' />
+                        <div className="flex items-center gap-1.5 text-neutral-400">
+                            <button onClick={() => setIsCreateGroupOpen(true)} title="Create Group" className="p-1.5 hover:text-white transition-colors cursor-pointer">
+                                <Users size={18} />
+                            </button>
+                            <button onClick={() => router.push('/buddies')} title="Buddies" className="p-1.5 hover:text-white transition-colors relative cursor-pointer">
+                                <SquarePen size={18} />
+                                {hasPendingRequests && (
+                                    <span className="absolute top-1 right-1 w-2 h-2 bg-white rounded-full" />
+                                )}
+                            </button>
                         </div>
                     </div>
 
-                    <div className='flex-1 overflow-y-auto flex flex-col gap-1 p-2'>
+                    {/* Search Bar */}
+                    <div className="p-3 border-b border-[#27272a]">
+                        <Input
+                            placeholder="Search conversations..."
+                            leftElement={<Search className="w-4 h-4 text-neutral-500" />}
+                        />
+                    </div>
+
+                    {/* Chat Rooms Directory */}
+                    <div className="flex-1 overflow-y-auto flex flex-col">
                         {roomsLoading ? (
-                            <div className='flex justify-center py-10'><Loader2 size={24} className='animate-spin text-[#ff4d00]' /></div>
+                            <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-neutral-500" /></div>
                         ) : rooms.length === 0 ? (
-                            <p className='text-center text-[#555] text-xs py-10'>No conversations yet</p>
+                            <p className="text-center text-xs text-neutral-500 py-12">No conversations yet</p>
                         ) : rooms.map(room => {
                             const otherId = room.kind === 'dm' ? room.members.find(m => m.userId !== currentUserId)?.userId : null;
                             const hasUnseenStory = (otherId && otherId !== currentUserId) ? storiesFeed.some(entry => entry._id === otherId && entry.stories.some(s => !(s.viewedBy && s.viewedBy[currentUserId]))) : false;
@@ -2012,102 +1848,96 @@ const ChatInner = () => {
                     </div>
                 </div>
 
-                {/* ── Chat area ─────────────────────────────────────────────── */}
-                <div className={`h-full flex-1 bg-[#181818] flex-col ${!activeRoom ? 'hidden md:flex' : 'flex'}`}>
-
+                {/* ── Main Chat Area ─────────────────────────────────────────────── */}
+                <div className={`h-full flex-1 bg-[#080808] flex-col ${!activeRoom ? 'hidden md:flex' : 'flex'}`}>
                     {!activeRoom ? (
-                        <div className='flex-1 flex items-center justify-center text-[#444]'>
-                            Select a conversation to start chatting
+                        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-xs text-neutral-500 gap-2 bg-grid-pattern">
+                            <ShieldCheck className="w-8 h-8 text-neutral-600 mb-2" />
+                            <span>Select a conversation to start messaging</span>
                         </div>
                     ) : (
                         <>
-                            {/* Header */}
-                            <div className='h-20 flex-shrink-0 bg-[#252525] border-b-2 border-[#353535] flex items-center gap-4 px-4 md:px-6'>
-                                <button onClick={() => setActiveRoom(null)} className="md:hidden text-[#888] hover:text-white">
-                                    <ArrowLeft size={24} />
-                                </button>
-                                <div className='relative'>
-                                    {(() => {
-                                        const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
-                                        const otherProfile = otherId ? profiles[otherId] : null;
-                                        const avatar = activeRoom.kind === 'dm' ? otherProfile?.avatar : activeRoom.avatar;
-                                        const title = activeRoom.kind === 'dm'
-                                            ? (otherProfile?.displayName ?? 'Direct Message')
-                                            : (activeRoom.name ?? 'Group Chat');
+                            {/* Active Chat Header with Prominent DP */}
+                            <div className="h-16 flex-shrink-0 bg-[#121212] border-b border-[#27272a] flex items-center justify-between px-4 sm:px-6">
+                                <div className="flex items-center gap-3">
+                                    <button onClick={() => setActiveRoom(null)} className="md:hidden text-neutral-400 hover:text-white p-1">
+                                        <ArrowLeft size={18} />
+                                    </button>
 
-                                        return avatar ? (
-                                            <img src={avatar} alt={title} className='h-11 w-11 rounded-full object-cover' />
-                                        ) : (
-                                            <div className='h-11 w-11 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm'>
-                                                {title[0]?.toUpperCase()}
-                                            </div>
-                                        );
-                                    })()}
+                                    {/* Display Picture (DP) */}
+                                    <div className="relative shrink-0">
+                                        {(() => {
+                                            const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
+                                            const otherProfile = otherId ? profiles[otherId] : null;
+                                            const avatar = activeRoom.kind === 'dm' ? otherProfile?.avatar : activeRoom.avatar;
+                                            const title = activeRoom.kind === 'dm'
+                                                ? (otherProfile?.displayName ?? 'Direct Message')
+                                                : (activeRoom.name ?? 'Group Chat');
+
+                                            return avatar ? (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img src={avatar} alt={title} className="h-10 w-10 rounded-full object-cover border border-neutral-700" />
+                                            ) : (
+                                                <div className="h-10 w-10 bg-neutral-800 text-white font-bold text-sm flex items-center justify-center rounded-full border border-neutral-700">
+                                                    {title[0]?.toUpperCase()}
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+
+                                    {/* Name & Status */}
+                                    <div
+                                        className={`flex flex-col text-left ${activeRoom.kind === 'group' ? 'cursor-pointer hover:opacity-80' : ''}`}
+                                        onClick={() => activeRoom.kind === 'group' && setShowGroupInfo(true)}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-sm font-bold text-neutral-100 tracking-tight">
+                                                {activeRoom.kind === 'dm'
+                                                    ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message')
+                                                    : (activeRoom.name ?? 'Group Chat')}
+                                            </h2>
+                                            <Badge variant="active" dot>E2EE</Badge>
+                                        </div>
+                                        <span className="text-xs text-neutral-500">
+                                            {activeRoom.kind === 'dm'
+                                                ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.isOnline ? 'Online' : 'Offline')
+                                                : `${activeRoom.members.length} members`}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div
-                                    className={`flex flex-col ${activeRoom.kind === 'group' ? 'cursor-pointer hover:opacity-80' : ''}`}
-                                    onClick={() => activeRoom.kind === 'group' && setShowGroupInfo(true)}
-                                >
-                                    <p className={`text-white font-bold text-base ${activeRoom.kind === 'group' ? 'underline decoration-[#ff4d00]/50 underline-offset-2' : ''}`}>
-                                        {activeRoom.kind === 'dm'
-                                            ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message')
-                                            : (activeRoom.name ?? 'Group Chat')}
-                                    </p>
-                                    {activeRoom.kind === 'dm' ? (
-                                        <p className='text-[#666] text-xs mt-0.5'>
-                                            {(() => {
-                                                const otherId = activeRoom.members.find(m => m.userId !== currentUserId)?.userId;
-                                                const otherProfile = otherId ? profiles[otherId] : null;
-                                                if (!otherProfile) return 'Loading...';
-                                                if (otherProfile.isOnline) return <span className="text-[#34b7f1] font-bold">Online</span>;
-                                                if (otherProfile.last_seen) {
-                                                    return `last seen ${new Date(otherProfile.last_seen).toLocaleString(undefined, {
-                                                        hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric'
-                                                    })}`;
-                                                }
-                                                return 'Offline';
-                                            })()}
-                                        </p>
-                                    ) : (
-                                        <p className='text-[#666] text-xs mt-0.5'>{activeRoom.members.length} members</p>
-                                    )}
-                                </div>
-                                <div className="flex-1" />
+
                                 <VideoCallOverlay
                                     roomId={activeRoom._id}
                                     activeRoomName={activeRoom.kind === 'dm' ? (profiles[activeRoom.members.find(m => m.userId !== currentUserId)?.userId ?? '']?.displayName ?? 'Direct Message') : (activeRoom.name ?? 'Group Chat')}
                                 />
                             </div>
 
-                            {/* Messages */}
-                            <div className='flex-1 overflow-y-auto py-4 flex flex-col gap-2' onScroll={handleScroll}>
+                            {/* Messages Stream */}
+                            <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-1" onScroll={handleScroll}>
                                 {msgsLoading && page === 1 ? (
-                                    <div className='flex justify-center py-10'><Loader2 size={24} className='animate-spin text-[#ff4d00]' /></div>
+                                    <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-neutral-500" /></div>
                                 ) : (
                                     <>
                                         {msgsLoading && page > 1 && (
-                                            <div className='flex justify-center py-2'><Loader2 size={16} className='animate-spin text-[#ff4d00]' /></div>
+                                            <div className="flex justify-center py-2"><Loader2 size={14} className="animate-spin text-neutral-500" /></div>
                                         )}
                                         {grouped.map(group => (
                                             <React.Fragment key={group.date}>
                                                 <DateSeparator label={group.date} />
                                                 {group.msgs.map(msg => {
                                                     let targetMsg = msg.replyTo ? messages.find(m => m._id === msg.replyTo) : undefined;
-                                                    if (msg.replyTo && !targetMsg) {
-                                                        targetMsg = { _id: msg.replyTo, content: "Original message...", senderId: "" } as any;
-                                                    }
-                                                    const targetName = targetMsg ? (targetMsg.senderId === currentUserId ? 'yourself' : (targetMsg.senderId ? profiles[targetMsg.senderId]?.displayName || 'someone' : 'someone')) : undefined;
-                                                    
+                                                    const targetName = targetMsg ? (targetMsg.senderId === currentUserId ? 'yourself' : (profiles[targetMsg.senderId]?.displayName || 'someone')) : undefined;
+
                                                     if (msg.senderId === 'system') {
                                                         return (
                                                             <div key={msg._id} className="w-full flex justify-center my-2">
-                                                                <div className="bg-[#252525] text-[#888] text-xs px-4 py-1.5 rounded-full border border-[#353535] max-w-[85%] text-center whitespace-pre-wrap">
+                                                                <div className="bg-[#161616] text-neutral-400 text-xs px-3 py-1.5 rounded-sm border border-[#27272a] max-w-[85%] text-center font-mono">
                                                                     {msg.content}
                                                                 </div>
                                                             </div>
                                                         );
                                                     }
-                                                    
+
                                                     return (
                                                         <MessageBubble
                                                             key={msg._id}
@@ -2121,7 +1951,6 @@ const ChatInner = () => {
                                                             onReact={(emoji) => {
                                                                 if (activeRoom) reactToMessage(activeRoom._id, msg._id, emoji)
                                                             }}
-                                                            onReplyClick={handleReplyClick}
                                                             onVotePoll={(msgId, optionId) => {
                                                                 if (socket && activeRoom) socket.emit('voteOnPoll', { roomId: activeRoom._id, messageId: msgId, optionId })
                                                             }}
@@ -2136,21 +1965,24 @@ const ChatInner = () => {
                                 )}
                             </div>
 
-                            {/* Input bar */}
+                            {/* Replying Banner */}
                             {replyingTo && (
-                                <div className="flex-shrink-0 bg-[#1c1c1c] border-t-2 border-[#2a2a2a] px-4 pt-3 pb-0 flex items-center justify-between">
-                                    <div className="flex flex-col border-l-4 border-[#ff4d00] pl-3 text-sm flex-1 mr-4 overflow-hidden">
-                                        <span className="text-[#ff4d00] font-bold text-xs mb-0.5">Replying to {replyingTo.senderId === currentUserId ? 'yourself' : profiles[replyingTo.senderId]?.displayName || 'someone'}</span>
-                                        <span className="text-[#888] truncate w-full">{replyingTo.content || 'Attachment'}</span>
+                                <div className="flex-shrink-0 bg-[#121212] border-t border-[#27272a] px-4 py-2 flex items-center justify-between text-xs">
+                                    <div className="flex flex-col border-l-2 border-white pl-2 text-left truncate">
+                                        <span className="text-xs text-neutral-400">Replying to {replyingTo.senderId === currentUserId ? 'yourself' : profiles[replyingTo.senderId]?.displayName || 'someone'}</span>
+                                        <span className="text-neutral-200 truncate">{replyingTo.content || 'Attachment'}</span>
                                     </div>
-                                    <button onClick={() => setReplyingTo(null)} className="text-[#888] hover:text-[#ff4d00] bg-[#252525] rounded-full p-1 transition-colors">
-                                        <X size={16} />
+                                    <button onClick={() => setReplyingTo(null)} className="text-neutral-500 hover:text-white p-1 cursor-pointer">
+                                        <X size={14} />
                                     </button>
                                 </div>
                             )}
-                            <div className={`flex-shrink-0 px-4 py-3 bg-[#1c1c1c] ${replyingTo ? '' : 'border-t-2 border-[#2a2a2a]'} flex items-end gap-3 relative`} ref={emojiPickerRef}>
+
+                            {/* Message Input Box with Commands Popover */}
+                            <div className="flex-shrink-0 p-3 bg-[#121212] border-t border-[#27272a] flex items-end gap-2 relative" ref={emojiPickerRef}>
+                                {/* Commands Autocomplete Popover */}
                                 {filteredCommands.length > 0 && (
-                                    <div className="absolute bottom-full left-4 mb-2 bg-[#252525] border border-[#353535] p-2 flex flex-col gap-1 w-[300px] max-h-[250px] overflow-y-auto z-50 rounded-lg shadow-xl" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}>
+                                    <div className="absolute bottom-full left-4 mb-2 bg-[#161616] border border-[#27272a] p-1.5 flex flex-col gap-1 w-[280px] max-h-[220px] overflow-y-auto z-50 rounded-sm shadow-2xl">
                                         {filteredCommands.map(c => (
                                             <button
                                                 key={c.command}
@@ -2158,23 +1990,25 @@ const ChatInner = () => {
                                                     setInput(c.command + ' ');
                                                     textareaRef.current?.focus();
                                                 }}
-                                                className="text-left p-2 hover:bg-[#353535] flex flex-col group transition-colors cursor-pointer rounded"
+                                                className="text-left p-2 hover:bg-[#252525] flex flex-col group transition-colors cursor-pointer rounded-xs"
                                             >
-                                                <span className="text-[#ff4d00] font-bold group-hover:text-white transition-colors">{c.command}</span>
-                                                <span className="text-xs text-[#888]">{c.description}</span>
+                                                <span className="text-white font-mono text-xs font-bold">{c.command}</span>
+                                                <span className="text-[11px] text-neutral-400">{c.description}</span>
                                             </button>
                                         ))}
                                     </div>
                                 )}
+
                                 {commandHint && (
-                                    <div className="absolute bottom-full left-4 mb-2 bg-[#252525] border border-[#ff4d00] p-3 flex flex-col gap-1 w-auto max-w-[400px] z-50 rounded-lg shadow-xl" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}>
-                                        <span className="text-[#ff4d00] font-bold text-xs uppercase tracking-wider">Command Usage</span>
-                                        <span className="text-white font-mono text-sm bg-black/30 p-1.5 rounded">{commandHint.usage}</span>
-                                        <span className="text-[#888] text-xs mt-1">{commandHint.description}</span>
+                                    <div className="absolute bottom-full left-4 mb-2 bg-[#161616] border border-[#27272a] p-3 flex flex-col gap-1 w-auto max-w-[360px] z-50 rounded-sm shadow-2xl">
+                                        <span className="text-neutral-400 font-mono text-xs uppercase">Usage</span>
+                                        <span className="text-white font-mono text-xs bg-black/40 p-1.5 rounded-xs border border-neutral-800">{commandHint.usage}</span>
+                                        <span className="text-neutral-400 text-xs mt-0.5">{commandHint.description}</span>
                                     </div>
                                 )}
+
                                 {mentionSuggestions.length > 0 && (
-                                    <div className="absolute bottom-full left-4 mb-2 bg-[#252525] border border-[#353535] p-2 flex flex-col gap-1 w-[250px] max-h-[250px] overflow-y-auto z-50 rounded-lg shadow-xl" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}>
+                                    <div className="absolute bottom-full left-4 mb-2 bg-[#161616] border border-[#27272a] p-1 flex flex-col gap-1 w-[240px] max-h-[220px] overflow-y-auto z-50 rounded-sm shadow-2xl">
                                         {mentionSuggestions.map(user => (
                                             <button
                                                 key={user.id}
@@ -2187,39 +2021,39 @@ const ChatInner = () => {
                                                         textareaRef.current?.focus();
                                                     }
                                                 }}
-                                                className="text-left p-2 hover:bg-[#353535] flex items-center gap-3 group transition-colors cursor-pointer rounded"
+                                                className="text-left p-2 hover:bg-[#252525] flex items-center gap-2.5 cursor-pointer rounded-xs"
                                             >
                                                 {user.avatar ? (
+                                                    // eslint-disable-next-line @next/next/no-img-element
                                                     <img src={user.avatar} alt={user.displayName} className="w-6 h-6 rounded-full object-cover" />
                                                 ) : (
-                                                    <div className='h-6 w-6 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-xs'>
+                                                    <div className="h-6 w-6 bg-neutral-800 text-white font-bold text-xs flex items-center justify-center rounded-full">
                                                         {user.displayName[0]?.toUpperCase()}
                                                     </div>
                                                 )}
-                                                <div className="flex flex-col">
-                                                    <span className="text-white font-bold text-sm group-hover:text-[#ff4d00] transition-colors">{user.displayName}</span>
-                                                    <span className="text-xs text-[#888]">@{user.username}</span>
+                                                <div className="flex flex-col text-left">
+                                                    <span className="text-white font-semibold text-xs">{user.displayName}</span>
+                                                    <span className="text-[10px] text-neutral-400">@{user.username}</span>
                                                 </div>
                                             </button>
                                         ))}
                                     </div>
                                 )}
+
                                 {showEmojiPicker && (
-                                    <div className="absolute bottom-full left-4 mb-2 z-50 shadow-2xl">
+                                    <div className="absolute bottom-full left-4 mb-2 z-50">
                                         <EmojiPicker
                                             theme={Theme.DARK}
-                                            onEmojiClick={(emojiData: EmojiClickData) => {
-                                                setInput(prev => prev + emojiData.emoji)
-                                            }}
+                                            onEmojiClick={(emojiData: EmojiClickData) => setInput(prev => prev + emojiData.emoji)}
                                         />
                                     </div>
                                 )}
+
                                 <button
                                     onClick={() => setShowEmojiPicker(prev => !prev)}
-                                    className='h-12 w-12 flex-shrink-0 bg-[#252525] flex items-center justify-center text-[#888] hover:text-[#ff4d00] transition-colors'
-                                    style={{ clipPath: 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)' }}
+                                    className="h-10 w-10 flex-shrink-0 bg-[#18181b] border border-[#27272a] flex items-center justify-center text-neutral-400 hover:text-white transition-colors rounded-sm cursor-pointer"
                                 >
-                                    <Smile size={20} />
+                                    <Smile size={18} />
                                 </button>
 
                                 <input
@@ -2231,35 +2065,37 @@ const ChatInner = () => {
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
                                     disabled={uploadingFile}
-                                    className='h-12 w-12 flex-shrink-0 bg-[#252525] flex items-center justify-center text-[#888] hover:text-[#ff4d00] transition-colors disabled:opacity-50'
-                                    style={{ clipPath: 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px)' }}
+                                    className="h-10 w-10 flex-shrink-0 bg-[#18181b] border border-[#27272a] flex items-center justify-center text-neutral-400 hover:text-white transition-colors rounded-sm cursor-pointer disabled:opacity-50"
                                 >
-                                    {uploadingFile ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
+                                    {uploadingFile ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
                                 </button>
+
                                 <textarea
                                     ref={textareaRef}
                                     value={input}
                                     onChange={handleInput}
                                     onKeyDown={handleKeyDown}
-                                    placeholder='Type a message… (Enter to send, Shift+Enter for newline)'
+                                    placeholder="Type a message or /command..."
                                     rows={1}
-                                    className='flex-1 bg-[#252525] text-[#e0e0e0] placeholder-[#555] px-4 py-3 text-sm resize-none focus:outline-none max-h-40 overflow-y-auto leading-relaxed'
-                                    style={{ clipPath: CLIP_INPUT, minHeight: '48px', height: 'auto' }}
+                                    className="flex-1 bg-[#18181b] text-neutral-100 placeholder:text-neutral-600 px-3 py-2.5 text-sm border border-[#27272a] rounded-sm focus:outline-none focus:border-neutral-400 transition-all resize-none max-h-32 overflow-y-auto leading-relaxed"
+                                    style={{ minHeight: '40px' }}
                                 />
-                                <button
+
+                                <Button
                                     onClick={() => input.trim() ? sendMessageHandler() : setIsAudioRecorderOpen(true)}
-                                    style={{ clipPath: CLIP_BTN }}
-                                    className={`h-12 w-12 flex-shrink-0 flex items-center justify-center text-white transition-opacity hover:bg-[#e04500] active:scale-95 ${input.trim() ? 'bg-[#ff4d00]' : 'bg-[#ff4d00]/80'}`}
+                                    variant="primary"
+                                    size="md"
+                                    className="h-10 w-10 px-0 shrink-0"
                                 >
-                                    {input.trim() ? <Send size={18} /> : <Mic size={18} />}
-                                </button>
+                                    {input.trim() ? <Send size={16} /> : <Mic size={16} />}
+                                </Button>
                             </div>
                         </>
                     )}
                 </div>
 
-                {/* ── Right sidebar – navigation ─────────────────────────────── */}
-                <div className='h-14 w-full md:h-full md:w-[5%] bg-[#252525] border-t-2 md:border-l-2 md:border-t-0 border-[#353535] flex-shrink-0 flex flex-row md:flex-col items-center justify-around md:justify-start py-0 md:py-5 gap-2 order-last md:order-last'>
+                {/* ── Right Sidebar Navigation ──────────────────────────────────── */}
+                <div className="h-14 w-full md:h-full md:w-14 bg-[#121212] border-t md:border-l md:border-t-0 border-[#27272a] flex-shrink-0 flex flex-row md:flex-col items-center justify-around md:justify-start py-0 md:py-4 gap-3 order-last">
                     {[
                         { href: '/chat', icon: <MessageSquare size={18} />, title: 'Chats' },
                         { href: '/stories', icon: <Play size={18} />, title: 'Stories', dot: hasAnyUnseenStory },
@@ -2274,21 +2110,19 @@ const ChatInner = () => {
                                 key={href}
                                 href={href}
                                 title={title}
-                                className={`w-10 h-10 flex items-center justify-center transition-colors relative ${isActive
-                                        ? 'bg-[#ff4d00]/15 text-[#ff4d00]'
-                                        : 'text-[#555] hover:text-[#ff4d00] hover:bg-[#ff4d00]/10'
+                                className={`w-9 h-9 flex items-center justify-center rounded-sm transition-all relative ${isActive
+                                        ? 'bg-white text-black font-bold'
+                                        : 'text-neutral-500 hover:text-neutral-200 hover:bg-[#18181b]'
                                     }`}
-                                style={{ clipPath: 'polygon(6px 0%,100% 0%,100% calc(100% - 6px),calc(100% - 6px) 100%,0% 100%,0% 6px)' }}
                             >
                                 {icon}
                                 {dot && (
-                                    <span className='absolute top-1 right-1 w-2.5 h-2.5 bg-[#ff4d00] rounded-full border-2 border-[#252525]' />
+                                    <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full" />
                                 )}
                             </Link>
                         )
                     })}
                 </div>
-
             </div>
         </div>
     )
@@ -2296,7 +2130,7 @@ const ChatInner = () => {
 
 const ChatPage = () => {
     return (
-        <React.Suspense fallback={<div className="flex h-screen items-center justify-center bg-[#131313]"><Loader2 size={32} className='animate-spin text-[#ff4d00]' /></div>}>
+        <React.Suspense fallback={<div className="flex h-screen items-center justify-center bg-[#080808]"><Loader2 size={24} className="animate-spin text-white" /></div>}>
             <ChatInner />
         </React.Suspense>
     )
